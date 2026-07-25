@@ -58,15 +58,25 @@ export function hasAccess(token?: string) {
 		return false;
 	}
 
-	const separator = token.lastIndexOf(".");
-	const payload = token.slice(0, separator);
-	const [user, expiresAt] = payload.split(".");
+	// O usuário pode ter ponto no nome, então o corte é sempre pelo último separador: assinatura no
+	// fim, validade antes dela, e o que sobra é o usuário inteiro.
+	const signatureAt = token.lastIndexOf(".");
+	const payload = token.slice(0, signatureAt);
+	const expiresAt = payload.lastIndexOf(".");
 
-	if (user !== env.ACCESS_USER || Number(expiresAt) <= Date.now()) {
+	if (signatureAt < 0 || expiresAt < 0) {
 		return false;
 	}
 
-	return matches(token.slice(separator + 1), sign(payload));
+	if (payload.slice(0, expiresAt) !== env.ACCESS_USER) {
+		return false;
+	}
+
+	if (Number(payload.slice(expiresAt + 1)) <= Date.now()) {
+		return false;
+	}
+
+	return matches(token.slice(signatureAt + 1), sign(payload));
 }
 
 function grantsAccess(input: { user: string; password: string }) {

@@ -6,8 +6,16 @@ import { publicationsRouter } from "@kw-lawyer/api/src/router/publications.ts";
 import { createRouterClient } from "@orpc/server";
 import { expect, test } from "bun:test";
 import { TEST_ACCESS_PASSWORD, TEST_ACCESS_USER } from "./env-test.ts";
+import { createHmac } from "node:crypto";
 import { expectOrpcError } from "./utils/assertions.ts";
 import { withRollback } from "./utils/db.ts";
+
+function signedTokenFor(user: string, expiresAt: number) {
+	const payload = `${user}.${expiresAt}`;
+	const signature = createHmac("sha256", TEST_ACCESS_PASSWORD).update(payload).digest("base64url");
+
+	return `${payload}.${signature}`;
+}
 
 test(
 	"sem o gate liberado nenhuma procedure de dado responde",
@@ -64,8 +72,19 @@ test(
 	}),
 );
 
-test("token forjado, vencido ou ausente não vale", () => {
+test("token forjado, vencido, truncado ou ausente não vale", () => {
 	expect(hasAccess()).toBe(false);
 	expect(hasAccess(`${TEST_ACCESS_USER}.99999999999999.assinatura-inventada`)).toBe(false);
-	expect(hasAccess(`outro.99999999999999.assinatura-inventada`)).toBe(false);
+	expect(hasAccess("outro.99999999999999.assinatura-inventada")).toBe(false);
+	expect(hasAccess("sem-separador")).toBe(false);
+	expect(hasAccess(`${TEST_ACCESS_USER}.assinatura`)).toBe(false);
+});
+
+test("token vencido não vale mesmo com assinatura boa", () => {
+	expect(hasAccess(signedTokenFor(TEST_ACCESS_USER, Date.now() - 1))).toBe(false);
+	expect(hasAccess(signedTokenFor(TEST_ACCESS_USER, Date.now() + 60_000))).toBe(true);
+});
+
+test("usuário com ponto no nome continua sendo reconhecido", () => {
+	expect(hasAccess(signedTokenFor("outro.usuario", Date.now() + 60_000))).toBe(false);
 });
