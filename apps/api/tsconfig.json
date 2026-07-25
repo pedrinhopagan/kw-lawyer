@@ -1,0 +1,10 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"types": ["bun-types"],
+		"paths": {
+			"@api/*": ["./src/*"]
+		}
+	},
+	"include": ["src/**/*", "drizzle.config.ts"]
+}

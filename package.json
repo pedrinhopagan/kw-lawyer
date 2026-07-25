@@ -1,0 +1,45 @@
+{
+	"name": "kw-lawyer",
+	"private": true,
+	"workspaces": [
+		"apps/*",
+		"packages/*"
+	],
+	"type": "module",
+	"scripts": {
+		"dev": "bun --filter './apps/api' --filter './apps/web' dev",
+		"build": "bun --filter 'apps/*' build",
+		"check": "bun --filter '*' typecheck",
+		"check:lobomfz": "lobomfz-check",
+		"lint": "oxlint . --no-error-on-unmatched-pattern",
+		"lint:fix": "oxlint --fix . --no-error-on-unmatched-pattern",
+		"format": "oxfmt .",
+		"format:check": "oxfmt --check .",
+		"test": "bun --filter './apps/tests' test",
+		"test:e2e": "bun --filter './apps/e2e' test",
+		"test:e2e:ui": "bun --filter './apps/e2e' test:ui",
+		"db:up": "docker compose up -d",
+		"db:down": "docker compose down",
+		"db:logs": "docker compose logs -f",
+		"db:generate": "bun --cwd apps/api db:generate",
+		"db:migrate": "bun --cwd apps/api db:migrate",
+		"deadlines:scan": "bun --cwd apps/api deadlines:scan",
+		"cases:scan": "bun --cwd apps/api cases:scan",
+		"db:studio": "bun --cwd apps/api db:studio",
+		"db:reset": "bun --cwd apps/api db:reset",
+		"trail:studio": "sh -c 'trail-studio --db \"${OBSERVABILITY_DB_PATH:-./apps/api/data/observability.db}\" \"$@\"' --",
+		"agent-api": "bun --cwd apps/api agent-api",
+		"deploy:vps": "bash scripts/deploy-vps.sh",
+		"prepare": "lefthook install"
+	},
+	"devDependencies": {
+		"@juicerq/trail-studio": "0.1.2",
+		"@lobomfz/check": "^0.1.2",
+		"@typescript/native-preview": "^7.0.0-dev.20260422.1",
+		"bun-types": "^1.3.13",
+		"lefthook": "^2.1.6",
+		"oxfmt": "^0.46.0",
+		"oxlint": "^1.61.0",
+		"oxlint-tsgolint": "^7.0.2001"
+	}
+}

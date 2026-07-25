@@ -1,0 +1,9 @@
+name: Setup
+description: Install Bun and project dependencies with frozen lockfile
+
+runs:
+  using: composite
+  steps:
+    - uses: oven-sh/setup-bun@v2
+    - run: bun install --frozen-lockfile
+      shell: bash

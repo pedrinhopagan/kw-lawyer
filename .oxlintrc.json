@@ -1,0 +1,11 @@
+{
+	"$schema": "./node_modules/oxlint/configuration_schema.json",
+	"extends": ["./node_modules/@lobomfz/check/.oxlintrc.json"],
+	"plugins": ["typescript", "unicorn"],
+	"categories": {
+		"correctness": "error",
+		"suspicious": "error",
+		"perf": "warn"
+	},
+	"ignorePatterns": ["node_modules", "dist", "build", ".data", "drizzle", "routeTree.gen.ts"]
+}

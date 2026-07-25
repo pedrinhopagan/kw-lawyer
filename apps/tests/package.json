@@ -1,0 +1,25 @@
+{
+	"name": "@kw-lawyer/tests",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"test": "bun test --concurrent --pass-with-no-tests",
+		"test:watch": "bun test --concurrent --watch --pass-with-no-tests",
+		"test:only": "bun test --concurrent --only --pass-with-no-tests",
+		"typecheck": "tsgo --noEmit",
+		"db:up": "docker compose up -d",
+		"db:down": "docker compose down",
+		"db:reset": "docker compose down -v && docker compose up -d",
+		"db:logs": "docker compose logs -f db_test"
+	},
+	"dependencies": {
+		"@kw-lawyer/api": "workspace:*",
+		"@kw-lawyer/web": "workspace:*",
+		"@orpc/server": "^1.14.0",
+		"drizzle-orm": "^0.45.2"
+	},
+	"devDependencies": {
+		"bun-types": "^1.3.13"
+	}
+}

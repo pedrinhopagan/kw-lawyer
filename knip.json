@@ -1,0 +1,16 @@
+{
+	"workspaces": {
+		"apps/api": {
+			"entry": ["src/app.ts", "src/**/*.test.ts"]
+		},
+		"apps/e2e": {
+			"entry": ["tests/**/*.ts", "playwright/**/*.ts", "playwright.config.ts"]
+		},
+		"apps/tests": {
+			"entry": ["src/**/*.test.ts"]
+		},
+		"apps/web": {
+			"entry": ["src/main.tsx", "src/routeTree.gen.ts"]
+		}
+	}
+}

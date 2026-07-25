@@ -1,0 +1,12 @@
+lawyer.paganagency.dedyn.io {
+	encode zstd gzip
+
+	@api path /orpc/* /auth/google/*
+	handle @api {
+		reverse_proxy kw-lawyer-api:1996
+	}
+
+	handle {
+		reverse_proxy kw-lawyer-web:80
+	}
+}

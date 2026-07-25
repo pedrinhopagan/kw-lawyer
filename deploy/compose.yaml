@@ -1,0 +1,80 @@
+name: kw-lawyer
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      internal:
+        aliases:
+          - kw-lawyer-postgres
+
+  migrate:
+    image: ${KW_LAWYER_API_IMAGE:-kw-lawyer-api:latest}
+    restart: "no"
+    command: ["bun", "run", "db:migrate"]
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+
+  api:
+    image: ${KW_LAWYER_API_IMAGE:-kw-lawyer-api:latest}
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - api_data:/app/apps/api/data
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "bun",
+          "-e",
+          "const response = await fetch('http://127.0.0.1:1996/orpc/access/status', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }); process.exit(response.ok ? 0 : 1)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      internal:
+      edge:
+        aliases:
+          - kw-lawyer-api
+
+  web:
+    image: ${KW_LAWYER_WEB_IMAGE:-kw-lawyer-web:latest}
+    restart: unless-stopped
+    networks:
+      edge:
+        aliases:
+          - kw-lawyer-web
+
+networks:
+  internal:
+    internal: true
+  edge:
+    external: true
+    name: ${EDGE_NETWORK:-pagan-agency_default}
+
+volumes:
+  postgres_data:
+  api_data:

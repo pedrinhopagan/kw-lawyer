@@ -1,0 +1,12 @@
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: lawyer_dev
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "6795:5432"
+    volumes:
+      - ./.data/postgres:/var/lib/postgresql/data
