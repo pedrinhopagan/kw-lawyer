@@ -19,6 +19,10 @@ O que o app faz com o que já aconteceu no processo:
   Cada eixo é uma aba de `/processos/$cnj`; `/prazos/$id` é o hub de ação de um prazo.
 - Transforma cada eixo em ponto de partida de uma ação, não em arquivo morto.
 
+A descoberta é por inscrição na OAB, não por advogado: o DJEN só sabe responder assim. Quem atua num
+processo cuja intimação sai no nome do sócio não recebe nada, então cada advogado pode acompanhar
+outras inscrições além da sua (`/inscricoes`) e o sync varre todas com o mesmo dono.
+
 Consequências para quem escreve código aqui:
 
 - Nada de tela que só lista. Toda tela responde "e agora, o que eu faço?".

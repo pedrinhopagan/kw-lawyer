@@ -46,8 +46,8 @@ export function InboxEmpty({ filtered, onClear }: { filtered: boolean; onClear: 
 		<div className="flex flex-col items-center gap-3 px-6 py-20 text-center">
 			<InboxIcon className="size-5 text-muted-foreground" />
 			<p className="max-w-sm text-sm leading-relaxed text-muted-foreground">
-				Nada publicado no seu nome até agora. A busca no DJEN roda sozinha sempre que você abre o
-				painel, e o que sair no diário aparece aqui na manhã seguinte.
+				Nada publicado nas suas inscrições até agora. A busca no DJEN roda sozinha sempre que você
+				abre o painel, e o que sair no diário aparece aqui na manhã seguinte.
 			</p>
 		</div>
 	);

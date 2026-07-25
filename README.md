@@ -34,6 +34,16 @@ Em `apps/api/.env`:
 Sem as duas o gate fica desligado e o app vai direto para o login por OAB, o que serve para
 desenvolvimento e para os testes. Em `NODE_ENV=production` a API se recusa a subir sem elas.
 
+## Inscrições acompanhadas
+
+A descoberta de processo é feita por inscrição na OAB, porque é assim que o DJEN indexa. Quando a
+intimação sai só no nome de outro advogado do escritório, o processo não chega a quem também atua
+nele. Por isso cada advogado pode acompanhar outras inscrições além da sua, em `/inscricoes`: o sync
+varre todas e o que aparecer entra no mesmo painel.
+
+Advogado sem nenhuma publicação na própria inscrição entra declarando o nome, em vez de ser barrado
+no login.
+
 ## Google Agenda
 
 O envio dos prazos para o Google Agenda fica desligado enquanto a API não tiver as três variáveis

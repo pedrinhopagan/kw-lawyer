@@ -71,6 +71,13 @@
       "when": 1784994494000,
       "tag": "0009_busy_nicolaos",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1785002768443,
+      "tag": "0010_conscious_tombstone",
+      "breakpoints": true
     }
   ]
 }

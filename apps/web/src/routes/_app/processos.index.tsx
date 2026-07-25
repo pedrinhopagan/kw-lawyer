@@ -49,15 +49,15 @@ function CasesPage() {
 				</h1>
 				{!cases.isPending && !cases.isError && (
 					<p className="text-xs text-muted-foreground tabular-nums">
-						{!filtered && countLabel(total, "processo no seu nome", "processos no seu nome")}
+						{!filtered && countLabel(total, "processo acompanhado", "processos acompanhados")}
 						{filtered && countLabel(total, "processo encontrado", "processos encontrados")}
 					</p>
 				)}
 			</header>
 
 			<p className="mt-1 max-w-[68ch] text-xs leading-relaxed text-muted-foreground">
-				Tudo em que a sua OAB aparece nas publicações do DJEN, com o andamento mais recente de cada
-				um.
+				Tudo em que as suas inscrições aparecem nas publicações do DJEN, com o andamento mais
+				recente de cada um.
 			</p>
 
 			<div className="mt-4">

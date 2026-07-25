@@ -8,6 +8,7 @@ import { decisionsRouter } from "./router/decisions.ts";
 import { evidenceRouter } from "./router/evidence.ts";
 import { hubRouter } from "./router/hub.ts";
 import { incidentsRouter } from "./router/incidents.ts";
+import { oabsRouter } from "./router/oabs.ts";
 import { publicationsRouter } from "./router/publications.ts";
 import { syncRouter } from "./router/sync.ts";
 
@@ -22,6 +23,7 @@ export const appRouter = {
 	appeals: appealsRouter,
 	incidents: incidentsRouter,
 	hub: hubRouter,
+	oabs: oabsRouter,
 	publications: publicationsRouter,
 	calendar: calendarRouter,
 };

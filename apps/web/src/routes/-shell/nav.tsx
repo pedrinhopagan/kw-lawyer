@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { Link } from "@tanstack/react-router";
-import { CalendarClockIcon, InboxIcon, ScaleIcon } from "lucide-react";
+import { CalendarClockIcon, IdCardIcon, InboxIcon, ScaleIcon } from "lucide-react";
 import { orpc } from "@/lib/orpc";
 
 const ITEM_CLASS =
@@ -56,6 +56,11 @@ export function NavItems({ onNavigate }: { onNavigate?: () => void }) {
 			<Link to="/processos" className={ITEM_CLASS} onClick={onNavigate}>
 				<ScaleIcon className="size-4 shrink-0" />
 				<span className="flex-1">Processos</span>
+			</Link>
+
+			<Link to="/inscricoes" className={ITEM_CLASS} onClick={onNavigate}>
+				<IdCardIcon className="size-4 shrink-0" />
+				<span className="flex-1">Inscrições</span>
 			</Link>
 		</nav>
 	);

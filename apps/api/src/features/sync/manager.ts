@@ -13,6 +13,7 @@ import { CaseAnalysisManager } from "../analysis/manager.ts";
 import { DeadlineManager } from "../deadlines/manager.ts";
 import { DatajudClient } from "../datajud/client.ts";
 import { DjenClient } from "../djen/client.ts";
+import { LawyerOabManager } from "../oabs/manager.ts";
 import {
 	contentHash,
 	extractActBody,
@@ -147,7 +148,7 @@ export class SyncManager {
 		const counters = emptySyncCounters();
 
 		const [lawyer] = await this.db
-			.select({ id: lawyers.id, oabNumber: lawyers.oabNumber, oabUf: lawyers.oabUf })
+			.select({ id: lawyers.id })
 			.from(lawyers)
 			.innerJoin(syncRuns, eq(syncRuns.lawyerId, lawyers.id))
 			.where(
@@ -163,8 +164,14 @@ export class SyncManager {
 			return { runId: options.runId, status: "ignorada" as const, ...counters };
 		}
 
+		const oabs = new LawyerOabManager(this.db);
+
 		try {
-			await this.discover(lawyer, options.runId, counters);
+			for (const source of await oabs.sources(lawyerId)) {
+				await this.discover({ id: lawyer.id, ...source }, options.runId, counters);
+				await oabs.markSynced(lawyerId, source);
+			}
+
 			await this.enrich(lawyerId, options.runId, counters, options.force);
 			await new DeadlineManager(this.db).scan({});
 			await new CaseAnalysisManager(this.db).scan({});
