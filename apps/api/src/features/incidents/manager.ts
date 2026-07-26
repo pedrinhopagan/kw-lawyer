@@ -143,7 +143,6 @@ export class IncidentManager {
 				id: cases.id,
 				cnjNumber: cases.cnjNumber,
 				className: cases.className,
-				grau: cases.grau,
 			})
 			.from(cases);
 

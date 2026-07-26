@@ -5,7 +5,6 @@ import { createRootRouteWithContext, Outlet } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
-import { TooltipProvider } from "@/components/ui/tooltip";
 import { queryClient } from "@/lib/orpc";
 
 export interface RouterContext {
@@ -21,12 +20,10 @@ function RootComponent() {
 	return (
 		<ThemeProvider>
 			<QueryClientProvider client={queryClient}>
-				<TooltipProvider delayDuration={200}>
-					<Outlet />
-					<Toaster position="bottom-right" />
-					{import.meta.env.DEV && <TanStackRouterDevtools position="bottom-right" />}
-					{import.meta.env.DEV && <ReactQueryDevtools />}
-				</TooltipProvider>
+				<Outlet />
+				<Toaster position="bottom-right" />
+				{import.meta.env.DEV && <TanStackRouterDevtools position="bottom-right" />}
+				{import.meta.env.DEV && <ReactQueryDevtools />}
 			</QueryClientProvider>
 		</ThemeProvider>
 	);

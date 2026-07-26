@@ -1,7 +1,13 @@
+import { resolve } from "node:path";
 import type { Page } from "@playwright/test";
 
 export const GATE_USER = "advogada-e2e";
 export const GATE_PASSWORD = "senha-de-teste";
+
+// O gate limita a oito tentativas por minuto na mesma conta, e é a mesma conta em toda a suíte. Um
+// projeto de setup abre o gate uma vez e as specs herdam o cookie; quem precisa provar o gate em si
+// zera o storageState e paga uma tentativa.
+export const GATE_STATE_PATH = resolve(import.meta.dirname, "../.auth/gate.json");
 
 export async function enterGate(page: Page) {
 	await page.getByLabel("Usuário").fill(GATE_USER);

@@ -7,9 +7,10 @@ import { cases } from "../../db/schema/cases.ts";
 import { type DeadlineStatus, deadlines } from "../../db/schema/deadlines.ts";
 import { movements } from "../../db/schema/movements.ts";
 import { publications } from "../../db/schema/publications.ts";
+import { currentInstance, instancesByCase } from "../cases/instances.ts";
 import { CaseManager } from "../cases/manager.ts";
 import { DeadlineManager } from "../deadlines/manager.ts";
-import type { DecisionSpecies } from "../decisions/classify.ts";
+import type { DecisionSpecies, DecisionSpeciesConfidence } from "../decisions/classify.ts";
 import { DecisionManager } from "../decisions/manager.ts";
 import { ownedByLawyer } from "../legal/scope.ts";
 import { appealAdviceFor } from "./catalog.ts";
@@ -60,10 +61,13 @@ export class AppealManager {
 			decision,
 			advice: appealAdviceFor({
 				species: decision.species,
-				grau: found.grau,
+				speciesConfidence: decision.speciesConfidence,
+				currentGrau: found.instance?.grau,
 				cnjNumber: found.cnjNumber,
 				className: found.className,
-				orgName: found.orgName,
+				caseOrgName: found.orgName,
+				decisionGrau: decision.grau,
+				decisionPublication: decision.publication,
 				transitedAt,
 			}),
 			choice: choices.get(decision.id),
@@ -114,17 +118,24 @@ export class AppealManager {
 				id: caseDecisions.id,
 				caseId: caseDecisions.caseId,
 				species: caseDecisions.species,
+				speciesConfidence: caseDecisions.speciesConfidence,
 				decidedAt: caseDecisions.decidedAt,
 				publicationId: caseDecisions.publicationId,
 				publicationAvailableAt: publications.availableAt,
+				publication: {
+					orgName: publications.orgName,
+					className: publications.className,
+					documentType: publications.documentType,
+				},
+				grau: movements.grau,
 				tribunal: cases.tribunal,
-				grau: cases.grau,
 				cnjNumber: cases.cnjNumber,
 				className: cases.className,
 				orgName: cases.orgName,
 			})
 			.from(caseDecisions)
 			.innerJoin(cases, eq(cases.id, caseDecisions.caseId))
+			.innerJoin(movements, eq(movements.id, caseDecisions.movementId))
 			.leftJoin(publications, eq(publications.id, caseDecisions.publicationId))
 			.where(
 				and(
@@ -184,11 +195,17 @@ export class AppealManager {
 			id: string;
 			caseId: string;
 			species: DecisionSpecies;
+			speciesConfidence: DecisionSpeciesConfidence;
 			decidedAt: Date;
 			publicationId: string | null;
 			publicationAvailableAt: string | null;
-			tribunal: string;
+			publication: {
+				orgName: string | null;
+				className: string | null;
+				documentType: string | null;
+			} | null;
 			grau: string | null;
+			tribunal: string;
 			cnjNumber: string;
 			className: string | null;
 			orgName: string | null;
@@ -200,12 +217,17 @@ export class AppealManager {
 			});
 		}
 
+		const instances = await instancesByCase(this.db, [input.decision.caseId]);
+
 		const advice = appealAdviceFor({
 			species: input.decision.species,
-			grau: input.decision.grau,
+			speciesConfidence: input.decision.speciesConfidence,
+			currentGrau: currentInstance(instances.get(input.decision.caseId) ?? [])?.grau,
 			cnjNumber: input.decision.cnjNumber,
 			className: input.decision.className,
-			orgName: input.decision.orgName,
+			caseOrgName: input.decision.orgName,
+			decisionGrau: input.decision.grau,
+			decisionPublication: input.decision.publication,
 			transitedAt: await this.transitedAt(input.decision.caseId),
 		});
 
@@ -232,6 +254,8 @@ export class AppealManager {
 			basis: `${option.admissibilityBasis}; prazo: ${option.deadlineBasis}`,
 			days: option.days,
 			unit: option.unit,
+			confidence: option.confidence,
+			reviewReasons: option.review ? [option.review] : [],
 		});
 
 		return created.id;

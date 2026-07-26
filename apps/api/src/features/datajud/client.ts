@@ -2,9 +2,16 @@ import { type } from "arktype";
 import type { CaseSubject } from "../../db/schema/cases.ts";
 import type { MovementComplement } from "../../db/schema/movements.ts";
 import { env } from "../../env.ts";
+import { grauRank } from "../legal/grau.ts";
 import { parseAjuizamento, parseInstant, toCodeText, toLabel } from "./normalize.ts";
 import { datajudResponseSchema, type DatajudMovimento, datajudSourceSchema } from "./types.ts";
 
+export const DATAJUD_BATCH_SIZE = 100;
+
+// Um CNJ pode ter um documento por instância, então o teto de hits não pode ser a quantidade de
+// números pedidos: seria a segunda instância do último processo do lote que ficaria de fora.
+const DATAJUD_DOCUMENTS_PER_CASE = 5;
+const DATAJUD_MAX_DOCUMENTS = 1_000;
 const DATAJUD_DEFAULT_TIMEOUT_MS = 30_000;
 const DATAJUD_DEFAULT_MAX_ATTEMPTS = 4;
 const DATAJUD_DEFAULT_RETRY_DELAY_MS = 1_500;
@@ -70,22 +77,26 @@ interface DatajudMovement {
 	complements: MovementComplement[];
 }
 
-interface DatajudCase {
+export interface DatajudDocument {
+	documentId: string;
+	cnjNumber: string;
+	grau: string | null;
+	sourceUpdatedAt: Date | null;
 	className: string | null;
 	classCode: string | null;
-	grau: string | null;
 	orgJudgingName: string | null;
 	orgJudgingCode: string | null;
 	subjects: CaseSubject[];
 	systemName: string | null;
+	formatName: string | null;
 	filedAt: Date | null;
 	secrecyLevel: number | null;
 	movements: DatajudMovement[];
+	source: unknown;
 }
 
-type DatajudResult =
-	| { status: "ok"; case: DatajudCase }
-	| { status: "sem_registro" }
+export type DatajudBatch =
+	| { status: "ok"; alias: string; documents: DatajudDocument[] }
 	| { status: "tribunal_nao_suportado" };
 
 type DatajudRequest =
@@ -141,6 +152,42 @@ function toMovement(movimento: DatajudMovimento): DatajudMovement | null {
 	};
 }
 
+function toDocument(hit: { documentId: string | null; source?: unknown }): DatajudDocument {
+	const source = datajudSourceSchema(hit.source);
+
+	if (source instanceof type.errors) {
+		throw new TypeError(`Processo do DataJud em formato inesperado: ${source.summary}`);
+	}
+
+	const documentId = toCodeText(source.id) ?? toLabel(hit.documentId);
+	const cnjNumber = toLabel(source.numeroProcesso);
+
+	if (!documentId || !cnjNumber) {
+		throw new TypeError("Processo do DataJud veio sem identificador ou sem número do processo.");
+	}
+
+	return {
+		documentId,
+		cnjNumber,
+		grau: toLabel(source.grau),
+		sourceUpdatedAt: parseInstant(source.dataHoraUltimaAtualizacao),
+		className: toLabel(source.classe?.nome),
+		classCode: toCodeText(source.classe?.codigo),
+		orgJudgingName: toLabel(source.orgaoJulgador?.nome),
+		orgJudgingCode: toCodeText(source.orgaoJulgador?.codigo),
+		subjects: (source.assuntos ?? []).map((assunto) => ({
+			codigo: assunto.codigo,
+			nome: toLabel(assunto.nome),
+		})),
+		systemName: toLabel(source.sistema?.nome),
+		formatName: toLabel(source.formato?.nome),
+		filedAt: parseAjuizamento(source.dataAjuizamento),
+		secrecyLevel: source.nivelSigilo,
+		movements: (source.movimentos ?? []).map(toMovement).filter((movement) => movement !== null),
+		source: hit.source,
+	};
+}
+
 export class DatajudClient {
 	private readonly baseUrl: string;
 	private readonly apiKey: string;
@@ -156,17 +203,86 @@ export class DatajudClient {
 		this.retryDelayMs = options.retryDelayMs ?? DATAJUD_DEFAULT_RETRY_DELAY_MS;
 	}
 
-	async findCase(params: { cnjNumber: string; tribunal: string }): Promise<DatajudResult> {
+	// O lote é a diferença entre três chamadas ao governo e trezentas: o DataJud responde 249 números
+	// numa consulta só, e um CNJ ausente da resposta é resultado legítimo, não erro.
+	async findCases(params: { tribunal: string; cnjNumbers: string[] }): Promise<DatajudBatch> {
 		const alias = datajudAlias(params.tribunal);
 
 		if (!alias) {
 			return { status: "tribunal_nao_suportado" };
 		}
 
+		if (!params.cnjNumbers.length) {
+			return { status: "ok", alias, documents: [] };
+		}
+
+		const documents = await this.fetchDocuments(alias, params.cnjNumbers);
+
+		// A ordem do Elasticsearch não é contrato. Quem decide qual instância vale para a classe e para
+		// o rito recursal é esta ordenação, e ela precisa dar o mesmo resultado em toda execução. O
+		// desempate segue a ordem jurídica dos graus, não a alfabética: por texto, G1 vinha antes de JE.
+		return {
+			status: "ok",
+			alias,
+			documents: documents.sort(
+				(left, right) =>
+					left.cnjNumber.localeCompare(right.cnjNumber) ||
+					grauRank(left.grau) - grauRank(right.grau) ||
+					left.documentId.localeCompare(right.documentId),
+			),
+		};
+	}
+
+	// O teto de `size` é do lote inteiro, então um processo com muitos documentos come a cota dos
+	// outros. Quando a resposta vem truncada, o lote é refeito em pedaços menores: deixar por isso
+	// mesmo apagaria da tela um processo que existe.
+	private async fetchDocuments(
+		alias: string,
+		cnjNumbers: string[],
+		size = cnjNumbers.length * DATAJUD_DOCUMENTS_PER_CASE,
+	): Promise<DatajudDocument[]> {
+		const page = await this.search(alias, cnjNumbers, size);
+
+		if (page.total <= page.documents.length) {
+			return page.documents;
+		}
+
+		if (cnjNumbers.length === 1) {
+			const [cnjNumber] = cnjNumbers;
+
+			// O processo que não cabe na consulta fica sem documento nenhum, e não com metade deles: um
+			// conjunto amputado apagaria instância viva na reconciliação. A falha é dele e para nele, em
+			// vez de derrubar o lote de cem processos que dividiu a mesma consulta.
+			if (size >= DATAJUD_MAX_DOCUMENTS) {
+				console.error(
+					`[datajud] o processo ${cnjNumber} tem ${page.total} documentos, acima do teto de ${DATAJUD_MAX_DOCUMENTS} por consulta: ficou de fora deste ciclo.`,
+				);
+
+				return [];
+			}
+
+			return await this.fetchDocuments(
+				alias,
+				cnjNumbers,
+				Math.min(page.total, DATAJUD_MAX_DOCUMENTS),
+			);
+		}
+
+		const half = Math.ceil(cnjNumbers.length / 2);
+
+		return [
+			...(await this.fetchDocuments(alias, cnjNumbers.slice(0, half))),
+			...(await this.fetchDocuments(alias, cnjNumbers.slice(half))),
+		];
+	}
+
+	private async search(alias: string, cnjNumbers: string[], size: number) {
 		const response = datajudResponseSchema(
 			await this.requestJson(alias, {
-				query: { match: { numeroProcesso: params.cnjNumber } },
-				size: 1,
+				query: { terms: { numeroProcesso: cnjNumbers } },
+				size,
+				sort: ["_doc"],
+				track_total_hits: true,
 			}),
 		);
 
@@ -174,37 +290,9 @@ export class DatajudClient {
 			throw new TypeError(`Resposta do DataJud em formato inesperado: ${response.summary}`);
 		}
 
-		const [hit] = response.hits.hits;
-
-		if (!hit) {
-			return { status: "sem_registro" };
-		}
-
-		const source = datajudSourceSchema(hit);
-
-		if (source instanceof type.errors) {
-			throw new TypeError(`Processo do DataJud em formato inesperado: ${source.summary}`);
-		}
-
 		return {
-			status: "ok",
-			case: {
-				className: toLabel(source.classe?.nome),
-				classCode: toCodeText(source.classe?.codigo),
-				grau: toLabel(source.grau),
-				orgJudgingName: toLabel(source.orgaoJulgador?.nome),
-				orgJudgingCode: toCodeText(source.orgaoJulgador?.codigo),
-				subjects: (source.assuntos ?? []).map((assunto) => ({
-					codigo: assunto.codigo,
-					nome: toLabel(assunto.nome),
-				})),
-				systemName: toLabel(source.sistema?.nome),
-				filedAt: parseAjuizamento(source.dataAjuizamento),
-				secrecyLevel: source.nivelSigilo,
-				movements: (source.movimentos ?? [])
-					.map(toMovement)
-					.filter((movement) => movement !== null),
-			},
+			documents: response.hits.hits.map((hit) => toDocument(hit)),
+			total: response.hits.total,
 		};
 	}
 

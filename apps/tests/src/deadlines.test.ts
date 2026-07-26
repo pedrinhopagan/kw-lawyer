@@ -17,16 +17,26 @@ import { createRouterClient } from "@orpc/server";
 import { expect, test } from "bun:test";
 import { assertDefined, expectOrpcError } from "./utils/assertions.ts";
 import { withRollback } from "./utils/db.ts";
+import { testContext } from "./utils/orpc.ts";
+import { SEED_HISTORY_CUTOFF } from "./utils/seed.ts";
 
 async function seedLawyer(tx: Tx, scenario: number, slot: number) {
 	const [lawyer] = await tx
 		.insert(lawyers)
-		.values({ name: `ADVOGADO ${slot}`, oabNumber: `${scenario}0${slot}`, oabUf: "SP" })
+		.values({
+			name: `ADVOGADO ${slot}`,
+			oabNumber: `${scenario}0${slot}`,
+			oabUf: "SP",
+			historyCutoffAt: SEED_HISTORY_CUTOFF,
+			onboardingState: "pronto",
+		})
 		.returning({
 			id: lawyers.id,
 			name: lawyers.name,
 			oabNumber: lawyers.oabNumber,
 			oabUf: lawyers.oabUf,
+			historyCutoffAt: lawyers.historyCutoffAt,
+			onboardingState: lawyers.onboardingState,
 		});
 
 	assertDefined(lawyer);
@@ -71,7 +81,6 @@ async function seedPublication(
 			textHtml: `<p>${input.textPlain}</p>`,
 			textPlain: input.textPlain,
 			excerpt: summarize(extractActBody(input.textPlain)),
-			raw: { origem: "teste" },
 		})
 		.returning({ id: publications.id });
 
@@ -114,7 +123,7 @@ test(
 		expect(rows[0]?.dueAt).toBe("2026-08-17");
 		expect(rows[0]?.publishedAt).toBe("2026-07-27");
 		expect(rows[0]?.startsAt).toBe("2026-07-28");
-		expect(rows[0]?.status).toBe("a_confirmar");
+		expect(rows[0]?.status).toBe("pendente");
 		expect(rows[0]?.calculation?.steps.filter((step) => step.counted)).toHaveLength(15);
 	}),
 );
@@ -153,14 +162,14 @@ test(
 		await new DeadlineManager(tx).scan({});
 
 		const brunoClient = createRouterClient(deadlinesRouter, {
-			context: { lawyer: bruno, access: true, db: tx },
+			context: testContext(tx, bruno),
 		});
 		const brunoAgenda = await brunoClient.list({});
 
 		expect(brunoAgenda.total).toBe(0);
 
 		const aliceClient = createRouterClient(deadlinesRouter, {
-			context: { lawyer: alice, access: true, db: tx },
+			context: testContext(tx, alice),
 		});
 		const aliceAgenda = await aliceClient.list({});
 
@@ -170,7 +179,7 @@ test(
 );
 
 test(
-	"confirmar, cumprir e descartar movem o prazo sem apagar o cálculo",
+	"cumprir e descartar movem o prazo sem apagar o cálculo",
 	withRollback(async (tx) => {
 		const lawyer = await seedLawyer(tx, 7304, 1);
 
@@ -182,13 +191,12 @@ test(
 		await new DeadlineManager(tx).scan({});
 
 		const client = createRouterClient(deadlinesRouter, {
-			context: { lawyer, access: true, db: tx },
+			context: testContext(tx, lawyer),
 		});
 		const agenda = await client.list({});
 		const id = agenda.items[0]?.id ?? "";
 
-		await client.confirm({ id });
-		expect((await client.get({ id })).status).toBe("confirmado");
+		expect((await client.get({ id })).status).toBe("pendente");
 
 		await client.complete({ id });
 
@@ -203,7 +211,7 @@ test(
 );
 
 test(
-	"reprocessar com motor novo não mexe em prazo já confirmado",
+	"reprocessar com motor novo não apaga a correção feita à mão",
 	withRollback(async (tx) => {
 		const lawyer = await seedLawyer(tx, 7305, 1);
 
@@ -218,7 +226,7 @@ test(
 		await manager.scan({});
 
 		const client = createRouterClient(deadlinesRouter, {
-			context: { lawyer, access: true, db: tx },
+			context: testContext(tx, lawyer),
 		});
 		const agenda = await client.list({});
 		const id = agenda.items[0]?.id ?? "";
@@ -251,7 +259,7 @@ test(
 		await new DeadlineManager(tx).scan({});
 
 		const client = createRouterClient(deadlinesRouter, {
-			context: { lawyer, access: true, db: tx },
+			context: testContext(tx, lawyer),
 		});
 		const triage = await client.triage({});
 
@@ -269,7 +277,7 @@ test(
 	withRollback(async (tx) => {
 		const lawyer = await seedLawyer(tx, 7307, 1);
 		const client = createRouterClient(deadlinesRouter, {
-			context: { lawyer, access: true, db: tx },
+			context: testContext(tx, lawyer),
 		});
 
 		await client.create({ title: "Atrasado", dueAt: "2026-07-20" });
@@ -298,12 +306,12 @@ test(
 		await new DeadlineManager(tx).scan({});
 
 		const client = createRouterClient(deadlinesRouter, {
-			context: { lawyer, access: true, db: tx },
+			context: testContext(tx, lawyer),
 		});
 		const agenda = await client.list({});
 
 		expect(agenda.items[0]?.confidence).toBe("baixa");
 		expect(agenda.items[0]?.audience).toBe("terceiro");
-		expect(agenda.items[0]?.status).toBe("a_confirmar");
+		expect(agenda.items[0]?.status).toBe("pendente");
 	}),
 );

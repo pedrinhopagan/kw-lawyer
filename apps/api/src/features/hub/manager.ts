@@ -7,9 +7,11 @@ import { caseEvidence } from "../../db/schema/case_evidence.ts";
 import { caseLawyers } from "../../db/schema/case_lawyers.ts";
 import { cases } from "../../db/schema/cases.ts";
 import { deadlines } from "../../db/schema/deadlines.ts";
+import { movements } from "../../db/schema/movements.ts";
 import { publications } from "../../db/schema/publications.ts";
 import { appealAdviceFor } from "../appeals/catalog.ts";
 import { AppealManager } from "../appeals/manager.ts";
+import { type CaseInstance, currentInstance, instancesByCase } from "../cases/instances.ts";
 import { IncidentManager } from "../incidents/manager.ts";
 
 const MATERIAL_LIMIT = 8;
@@ -136,9 +138,6 @@ export class HubManager {
 				tribunal: cases.tribunal,
 				orgName: cases.orgName,
 				className: cases.className,
-				grau: cases.grau,
-				orgJudgingName: cases.orgJudgingName,
-				systemName: cases.systemName,
 				parties: sql<{ name: string; polo: string | null }[]>`coalesce(
 					(select json_agg(json_build_object('name', p.name, 'polo', p.polo) order by p.polo, p.name)
 					 from case_parties p where p.case_id = ${cases.id}),
@@ -154,7 +153,9 @@ export class HubManager {
 			return null;
 		}
 
-		return row;
+		const instances = (await instancesByCase(this.db, [row.id])).get(row.id) ?? [];
+
+		return { ...row, instances, instance: currentInstance(instances) };
 	}
 
 	private async evidenceOf(caseId: string, publicationId: string | null) {
@@ -242,7 +243,7 @@ export class HubManager {
 			cnjNumber: string;
 			className: string | null;
 			orgName: string | null;
-			grau: string | null;
+			instance: CaseInstance | undefined;
 		},
 		publicationId: string | null,
 		lawyerId: string,
@@ -255,11 +256,20 @@ export class HubManager {
 			.select({
 				id: caseDecisions.id,
 				species: caseDecisions.species,
+				speciesConfidence: caseDecisions.speciesConfidence,
+				publication: {
+					orgName: publications.orgName,
+					className: publications.className,
+					documentType: publications.documentType,
+				},
+				grau: movements.grau,
 				choice: caseAppeals.choice,
 				choiceActKey: caseAppeals.actKey,
 				choiceReason: caseAppeals.reason,
 			})
 			.from(caseDecisions)
+			.innerJoin(publications, eq(publications.id, caseDecisions.publicationId))
+			.innerJoin(movements, eq(movements.id, caseDecisions.movementId))
 			.leftJoin(
 				caseAppeals,
 				and(eq(caseAppeals.decisionId, caseDecisions.id), eq(caseAppeals.lawyerId, lawyerId)),
@@ -279,10 +289,13 @@ export class HubManager {
 
 		const advice = appealAdviceFor({
 			species: decision.species,
-			grau: caseRow.grau,
+			speciesConfidence: decision.speciesConfidence,
+			currentGrau: caseRow.instance?.grau,
 			cnjNumber: caseRow.cnjNumber,
 			className: caseRow.className,
-			orgName: caseRow.orgName,
+			caseOrgName: caseRow.orgName,
+			decisionGrau: decision.grau,
+			decisionPublication: decision.publication,
 			transitedAt: await new AppealManager(this.db).transitedAt(caseRow.id),
 		});
 

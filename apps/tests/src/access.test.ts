@@ -20,7 +20,7 @@ function signedTokenFor(user: string, expiresAt: number) {
 test(
 	"sem o gate liberado nenhuma procedure de dado responde",
 	withRollback(async (tx) => {
-		const context = { lawyer: null, access: false, db: tx };
+		const context = { session: null, access: false, db: tx };
 
 		await expectOrpcError(createRouterClient(authRouter, { context }).me(), "ACCESS_REQUIRED");
 		await expectOrpcError(createRouterClient(casesRouter, { context }).list({}), "ACCESS_REQUIRED");
@@ -35,7 +35,7 @@ test(
 	"o status do gate responde mesmo sem acesso, para a tela saber o que pedir",
 	withRollback(async (tx) => {
 		const client = createRouterClient(accessRouter, {
-			context: { lawyer: null, access: false, db: tx },
+			context: { session: null, access: false, db: tx },
 		});
 
 		expect(await client.status()).toEqual({ granted: false });
@@ -46,7 +46,7 @@ test(
 	"credencial correta devolve um token que o gate reconhece",
 	withRollback(async (tx) => {
 		const client = createRouterClient(accessRouter, {
-			context: { lawyer: null, access: false, db: tx },
+			context: { session: null, access: false, db: tx },
 		});
 
 		const { token } = await client.login({
@@ -62,7 +62,7 @@ test(
 	"senha errada não entra",
 	withRollback(async (tx) => {
 		const client = createRouterClient(accessRouter, {
-			context: { lawyer: null, access: false, db: tx },
+			context: { session: null, access: false, db: tx },
 		});
 
 		await expectOrpcError(

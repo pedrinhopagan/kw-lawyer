@@ -1,0 +1,1 @@
+ALTER TABLE "case_decisions" RENAME COLUMN "confidence" TO "species_confidence";

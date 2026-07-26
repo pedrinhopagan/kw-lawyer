@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { CheckIcon, ScaleIcon, XIcon } from "lucide-react";
+import { CheckIcon, ScaleIcon, TriangleAlertIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Chip, SectionRule } from "@/components/dossier";
@@ -64,10 +64,17 @@ function AppealBlock({ appeal }: { appeal: NonNullable<HubData["appeal"]> }) {
 									{option.admissibilityBasis}
 								</span>
 								{option.needsPreparo && <Chip>exige preparo</Chip>}
+								{option.confidence !== "alta" && <Chip>confira a regra</Chip>}
 							</div>
 							{!!option.condition && (
 								<p className="mt-1 text-xs leading-relaxed text-muted-foreground">
 									{option.condition}
+								</p>
+							)}
+							{!!option.review && (
+								<p className="mt-1.5 flex items-start gap-1.5 rounded-[3px] border border-border bg-muted/40 p-1.5 text-2xs leading-relaxed text-muted-foreground">
+									<TriangleAlertIcon className="mt-[2px] size-3 shrink-0" />
+									<span>{option.review}</span>
 								</p>
 							)}
 						</button>
@@ -99,7 +106,7 @@ function AppealBlock({ appeal }: { appeal: NonNullable<HubData["appeal"]> }) {
 }
 
 export function HubActions({ data }: { data: HubData }) {
-	const { confirm, complete, dismiss, reschedule } = useDeadlineActions();
+	const { complete, dismiss, reschedule } = useDeadlineActions();
 	const [newDueAt, setNewDueAt] = useState(data.deadline.dueAt);
 
 	return (
@@ -110,24 +117,13 @@ export function HubActions({ data }: { data: HubData }) {
 				<SectionRule title="Dar baixa neste prazo" />
 
 				<div className="mt-3 flex flex-wrap gap-2">
-					{data.deadline.status === "a_confirmar" && (
-						<Button
-							size="sm"
-							disabled={confirm.isPending}
-							onClick={() => confirm.mutate({ id: data.deadline.id })}
-						>
-							<CheckIcon />
-							Confirmar prazo
-						</Button>
-					)}
-
 					{data.deadline.status !== "cumprido" && (
 						<Button
-							variant="outline"
 							size="sm"
 							disabled={complete.isPending}
 							onClick={() => complete.mutate({ id: data.deadline.id })}
 						>
+							<CheckIcon />
 							Marcar cumprido
 						</Button>
 					)}

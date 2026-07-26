@@ -2,15 +2,18 @@ import { ORPCError } from "@orpc/server";
 import { and, asc, count, desc, eq, gt, inArray, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
 import type { Db, Tx } from "../../db/client.ts";
 import { calendarDays } from "../../db/schema/calendar_days.ts";
+import { caseParties } from "../../db/schema/case_parties.ts";
 import { cases } from "../../db/schema/cases.ts";
 import {
 	type DeadlineAudience,
+	type DeadlineConfidence,
 	type DeadlineStatus,
 	deadlines,
 } from "../../db/schema/deadlines.ts";
 import { publicationLinks } from "../../db/schema/publication_links.ts";
 import { publicationScans } from "../../db/schema/publication_scans.ts";
 import { publications } from "../../db/schema/publications.ts";
+import { CANCELED_PUBLICATION_WARNING, isCanceledPublication } from "../djen/project.ts";
 import { type CuratedDay, createForensicCalendar } from "./calendar.ts";
 import { calculateDeadline, type CountingUnit } from "./counting.ts";
 import { detectDeadline } from "./extract.ts";
@@ -22,6 +25,11 @@ import {
 } from "./filters.ts";
 
 export const DEADLINE_ENGINE_VERSION = 2;
+
+interface DeadlineParty {
+	name: string;
+	polo: string | null;
+}
 
 interface DeadlineByPublication {
 	id: string;
@@ -37,16 +45,24 @@ const SUMMARY_WINDOW_DAYS = 7;
 interface ScanInput {
 	publicationIds?: string[];
 	force?: boolean;
+	onProgress?: (done: number) => Promise<void>;
 }
+
+// A carga inicial varre o histórico inteiro, e o texto da publicação vem junto na consulta. Em uma
+// só passada isso é um statement de dezenas de milhares de linhas com texto: passa do teto de tempo
+// do banco e derruba a sincronização inteira, além de subir tudo para a memória de uma vez.
+const DEADLINE_SCAN_CHUNK = 500;
 
 interface ListInput extends DeadlineFilters {
 	lawyerId: string;
+	historyCutoffAt: string;
 	limit: number;
 	offset: number;
 }
 
 interface SummaryInput extends DeadlineFilters {
 	lawyerId: string;
+	historyCutoffAt: string;
 	today: string;
 }
 
@@ -82,6 +98,38 @@ export class DeadlineManager {
 	}
 
 	async scan(input: ScanInput) {
+		const result = { scanned: 0, created: 0, updated: 0, flagged: 0 };
+
+		if (!input.publicationIds?.length) {
+			return await this.scanBatch(input, await this.curatedDaysByScope());
+		}
+
+		const curated = await this.curatedDaysByScope();
+
+		for (let start = 0; start < input.publicationIds.length; start += DEADLINE_SCAN_CHUNK) {
+			const batch = await this.scanBatch(
+				{
+					...input,
+					publicationIds: input.publicationIds.slice(start, start + DEADLINE_SCAN_CHUNK),
+				},
+				curated,
+			);
+
+			result.scanned += batch.scanned;
+			result.created += batch.created;
+			result.updated += batch.updated;
+			result.flagged += batch.flagged;
+
+			await input.onProgress?.(result.scanned);
+		}
+
+		return result;
+	}
+
+	private async scanBatch(
+		input: ScanInput,
+		curated: Awaited<ReturnType<DeadlineManager["curatedDaysByScope"]>>,
+	) {
 		const pending = await this.db
 			.select({
 				id: publications.id,
@@ -91,6 +139,8 @@ export class DeadlineManager {
 				communicationType: publications.communicationType,
 				availableAt: publications.availableAt,
 				textPlain: publications.textPlain,
+				active: publications.active,
+				cancelReason: publications.cancelReason,
 				scannedVersion: publicationScans.engineVersion,
 			})
 			.from(publications)
@@ -111,7 +161,6 @@ export class DeadlineManager {
 			return { scanned: 0, created: 0, updated: 0, flagged: 0 };
 		}
 
-		const curated = await this.curatedDaysByScope();
 		const links = await this.db
 			.select({
 				publicationId: publicationLinks.publicationId,
@@ -196,11 +245,19 @@ export class DeadlineManager {
 				days: detection.primary.days,
 				unit: detection.primary.counting,
 			});
-			const warnings = [...calculation.warnings, ...detection.reviewReasons];
+			const warnings = [
+				...calculation.warnings,
+				...detection.reviewReasons,
+				...(isCanceledPublication(publication) ? [CANCELED_PUBLICATION_WARNING] : []),
+			];
 
 			for (const lawyerId of lawyersByPublication.get(publication.id) ?? []) {
 				const [existing] = await this.db
-					.select({ id: deadlines.id, status: deadlines.status })
+					.select({
+						id: deadlines.id,
+						status: deadlines.status,
+						rescheduledAt: deadlines.rescheduledAt,
+					})
 					.from(deadlines)
 					.where(
 						and(
@@ -239,7 +296,7 @@ export class DeadlineManager {
 					continue;
 				}
 
-				if (existing.status !== "a_confirmar") {
+				if (existing.status !== "pendente" || existing.rescheduledAt) {
 					continue;
 				}
 
@@ -252,7 +309,11 @@ export class DeadlineManager {
 	}
 
 	async list(input: ListInput) {
-		const where = deadlineWhere({ lawyerId: input.lawyerId, filters: input });
+		const where = deadlineWhere({
+			lawyerId: input.lawyerId,
+			historyCutoffAt: input.historyCutoffAt,
+			filters: input,
+		});
 
 		const [rows, totals] = await Promise.all([
 			this.db
@@ -275,12 +336,18 @@ export class DeadlineManager {
 					note: deadlines.note,
 					warnings: deadlines.warnings,
 					publicationId: deadlines.publicationId,
+					parties: sql<DeadlineParty[]>`coalesce((
+						select json_agg(json_build_object('name', ${caseParties.name}, 'polo', ${caseParties.polo}) order by ${caseParties.polo} nulls last, ${caseParties.name})
+						from ${caseParties}
+						where ${caseParties.caseId} = ${deadlines.caseId}
+					), '[]'::json)`,
 					case: {
 						id: cases.id,
 						cnjNumber: cases.cnjNumber,
 						formattedNumber: cases.formattedNumber,
 						tribunal: cases.tribunal,
 						orgName: cases.orgName,
+						className: cases.className,
 					},
 				})
 				.from(deadlines)
@@ -315,14 +382,20 @@ export class DeadlineManager {
 					open,
 					ne(deadlines.audience, THIRD_PARTY_AUDIENCE),
 				)})::int`,
-				toConfirm: sql<number>`count(*) filter (where ${eq(deadlines.status, "a_confirmar")})::int`,
-				confirmed: sql<number>`count(*) filter (where ${eq(deadlines.status, "confirmado")})::int`,
+				pending: sql<number>`count(*) filter (where ${eq(deadlines.status, "pendente")})::int`,
 				done: sql<number>`count(*) filter (where ${eq(deadlines.status, "cumprido")})::int`,
 				dismissed: sql<number>`count(*) filter (where ${eq(deadlines.status, "descartado")})::int`,
 			})
 			.from(deadlines)
 			.leftJoin(cases, eq(cases.id, deadlines.caseId))
-			.where(deadlineWhere({ lawyerId: input.lawyerId, filters: input, allStatuses: true }));
+			.where(
+				deadlineWhere({
+					lawyerId: input.lawyerId,
+					historyCutoffAt: input.historyCutoffAt,
+					filters: input,
+					allStatuses: true,
+				}),
+			);
 
 		const pendingReview = await this.pendingReviewTotal(input.lawyerId);
 
@@ -331,8 +404,7 @@ export class DeadlineManager {
 			today: rows?.today ?? 0,
 			next7: rows?.next7 ?? 0,
 			actionable: rows?.actionable ?? 0,
-			toConfirm: rows?.toConfirm ?? 0,
-			confirmed: rows?.confirmed ?? 0,
+			pending: rows?.pending ?? 0,
 			done: rows?.done ?? 0,
 			dismissed: rows?.dismissed ?? 0,
 			pendingReview,
@@ -476,8 +548,9 @@ export class DeadlineManager {
 			.update(deadlines)
 			.set({
 				dueAt: input.dueAt,
-				status: "confirmado",
+				status: "pendente",
 				note: input.note,
+				rescheduledAt: new Date(),
 			})
 			.where(and(eq(deadlines.id, input.id), eq(deadlines.lawyerId, input.lawyerId)))
 			.returning({ id: deadlines.id, dueAt: deadlines.dueAt });
@@ -506,7 +579,7 @@ export class DeadlineManager {
 				title: input.title,
 				days: 0,
 				dueAt: input.dueAt,
-				status: "confirmado",
+				status: "pendente",
 				origin: "manual",
 				confidence: "alta",
 				audience: "partes",
@@ -534,6 +607,8 @@ export class DeadlineManager {
 		basis: string;
 		days: number;
 		unit: CountingUnit;
+		confidence: DeadlineConfidence;
+		reviewReasons: string[];
 	}) {
 		const curated = await this.curatedDaysByScope();
 		const calendar = createForensicCalendar({
@@ -549,7 +624,7 @@ export class DeadlineManager {
 			days: input.days,
 			unit: input.unit,
 		});
-		const warnings = [...calculation.warnings];
+		const warnings = [...calculation.warnings, ...input.reviewReasons];
 
 		if (!input.baseIsPublication) {
 			warnings.push(
@@ -573,9 +648,9 @@ export class DeadlineManager {
 				startsAt: calculation.startsAt,
 				dueAt: calculation.dueAt,
 				expectedDueAt: calculation.expectedDueAt,
-				status: "confirmado",
+				status: "pendente",
 				origin: "manual",
-				confidence: "alta",
+				confidence: input.confidence,
 				audience: "partes",
 				warnings,
 				calculation: { ...calculation, engineVersion: DEADLINE_ENGINE_VERSION },

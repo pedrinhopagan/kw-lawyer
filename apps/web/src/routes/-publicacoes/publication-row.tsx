@@ -1,6 +1,9 @@
 import { Link } from "@tanstack/react-router";
+import { CanceledPublicationMark } from "@/components/canceled-publication-mark";
 import { cn } from "@/lib/cn";
-import { formatCnj, formatEventDate } from "@/lib/format";
+import { CANCELED_PUBLICATION_LABEL } from "@/lib/deadline-meta";
+import { formatCnj, formatEventDate, formatPersonName } from "@/lib/format";
+import { isCanceledPublication } from "@api/features/djen/project";
 import { fullDate, publicationTitle } from "./publication-meta";
 import type { PublicationItem } from "./queries";
 
@@ -12,6 +15,8 @@ export function PublicationRow({
 	onOpen: (item: PublicationItem) => void;
 }) {
 	const unread = !item.readAt;
+	const canceled = isCanceledPublication(item);
+	const client = item.parties.at(0);
 
 	return (
 		<li className="group relative flex flex-col gap-0.5 px-4 py-2.5 transition-colors focus-within:bg-accent/60 hover:bg-accent/60">
@@ -22,21 +27,35 @@ export function PublicationRow({
 			>
 				<span className="sr-only">
 					Abrir {publicationTitle(item)} de {fullDate(item.availableAt)}
+					{canceled && `, ${CANCELED_PUBLICATION_LABEL}`}
 				</span>
 			</button>
 
-			{unread && <span aria-hidden className="absolute inset-y-0 left-0 w-[2px] bg-primary" />}
+			{(canceled || unread) && (
+				<span
+					aria-hidden
+					className={cn(
+						"absolute inset-y-0 left-0 w-[2px]",
+						canceled ? "bg-destructive" : "bg-primary",
+					)}
+				/>
+			)}
 
 			<div className="pointer-events-none relative flex items-baseline gap-3">
 				<span
 					className={cn(
 						"truncate text-sm",
-						unread && "font-medium text-foreground",
-						!unread && "text-foreground/75",
+						unread && "font-semibold text-foreground",
+						!unread && "font-medium text-foreground/75",
 					)}
 				>
-					{publicationTitle(item)}
+					{!!client && formatPersonName(client.name)}
+					{!client && publicationTitle(item)}
 				</span>
+
+				{!!client && (
+					<span className="shrink-0 text-xs text-foreground/70">{publicationTitle(item)}</span>
+				)}
 
 				<time
 					dateTime={item.availableAt}
@@ -48,6 +67,8 @@ export function PublicationRow({
 			</div>
 
 			<div className="pointer-events-none relative flex items-center gap-2 text-xs text-muted-foreground">
+				{canceled && <CanceledPublicationMark />}
+
 				{!!item.tribunal && <span className="tag-tribunal shrink-0">{item.tribunal}</span>}
 
 				{!!item.cnjNumber && (

@@ -176,7 +176,7 @@ export function CaseTimeline({
 			<ol className="mt-1">
 				{days.map((day) => (
 					<li key={day.id}>
-						<div className="sticky top-12 z-10 flex items-center gap-3 bg-background/92 py-1.5 backdrop-blur-sm md:top-0">
+						<div className="sticky top-[var(--kw-mobile-header)] z-10 flex items-center gap-3 bg-background/92 py-1.5 backdrop-blur-sm md:top-0">
 							<span className="text-2xs font-medium tracking-[0.1em] text-muted-foreground uppercase">
 								{day.label}
 							</span>

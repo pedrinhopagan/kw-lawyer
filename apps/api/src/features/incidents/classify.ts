@@ -57,7 +57,6 @@ const KIND_BY_CLASS: { kind: RelationKind; pattern: RegExp }[] = [
 export interface CaseIdentity {
 	cnjNumber: string;
 	className: string | null;
-	grau: string | null;
 }
 
 export interface DiscoveredRelation {

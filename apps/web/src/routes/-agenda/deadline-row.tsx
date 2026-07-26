@@ -1,12 +1,13 @@
 import { Link } from "@tanstack/react-router";
-import { CircleAlertIcon, CircleCheckIcon, TriangleAlertIcon, UserRoundIcon } from "lucide-react";
+import { CircleAlertIcon, CircleCheckIcon, TriangleAlertIcon, UsersRoundIcon } from "lucide-react";
+import { CanceledPublicationMark } from "@/components/canceled-publication-mark";
 import { cn } from "@/lib/cn";
-import { formatCnj } from "@/lib/format";
+import { formatCnj, formatPersonName } from "@/lib/format";
 import {
 	AUDIENCE_LABELS,
 	CONFIDENCE_LABELS,
-	STATUS_LABELS,
-	UNIT_LABELS,
+	daysLabel,
+	isCanceledPublicationWarning,
 	urgencyOf,
 } from "@/lib/deadline-meta";
 import type { DeadlineItem } from "./queries";
@@ -17,14 +18,6 @@ const URGENCY_RAIL = {
 	proximo: "bg-primary/45",
 	futuro: "bg-transparent",
 } as const;
-
-function daysLabel(item: Pick<DeadlineItem, "days" | "unit">) {
-	if (item.days < 1) {
-		return "manual";
-	}
-
-	return `${item.days} ${UNIT_LABELS[item.unit]}`;
-}
 
 function ConfidenceMark({ confidence }: Pick<DeadlineItem, "confidence">) {
 	return (
@@ -49,7 +42,7 @@ function AudienceMark({ audience }: Pick<DeadlineItem, "audience">) {
 
 	return (
 		<span className="flex items-center gap-1 rounded-full border border-border px-1.5 text-2xs text-muted-foreground">
-			<UserRoundIcon className="size-3" />
+			<UsersRoundIcon className="size-3" />
 			{AUDIENCE_LABELS[audience]}
 		</span>
 	);
@@ -63,7 +56,9 @@ export function DeadlineRow({
 	onOpen: (item: DeadlineItem) => void;
 }) {
 	const urgency = urgencyOf(item.dueAt);
-	const unconfirmed = item.status === "a_confirmar";
+	const client = item.parties.at(0);
+	const opponent = item.parties.at(1);
+	const remaining = Math.max(item.parties.length - 2, 0);
 
 	return (
 		<li className="group relative flex flex-col gap-1 px-4 py-3 transition-colors focus-within:bg-accent/60 hover:bg-accent/60">
@@ -72,7 +67,10 @@ export function DeadlineRow({
 				className="absolute inset-0 cursor-pointer outline-none focus-visible:inset-ring-2 focus-visible:inset-ring-ring/70"
 				onClick={() => onOpen(item)}
 			>
-				<span className="sr-only">Abrir o prazo {item.title}</span>
+				<span className="sr-only">
+					Abrir o prazo {item.title}
+					{!!client && ` de ${formatPersonName(client.name)}`}
+				</span>
 			</button>
 
 			<span
@@ -81,12 +79,39 @@ export function DeadlineRow({
 			/>
 
 			<div className="pointer-events-none relative flex items-baseline gap-3">
-				<span className="truncate text-sm font-medium text-foreground">{item.title}</span>
+				<span className="flex min-w-0 items-baseline gap-1.5">
+					<span className="truncate text-sm font-semibold tracking-[-0.01em] text-foreground">
+						{!!client && formatPersonName(client.name)}
+						{!client && item.title}
+					</span>
+
+					{!!opponent && (
+						<span className="truncate text-xs text-muted-foreground">
+							× {formatPersonName(opponent.name)}
+						</span>
+					)}
+
+					{remaining > 0 && (
+						<span className="shrink-0 text-2xs text-muted-foreground">+{remaining}</span>
+					)}
+				</span>
 
 				<span className="ml-auto shrink-0 font-mono text-2xs tracking-wide text-muted-foreground uppercase">
 					{daysLabel(item)}
 				</span>
 			</div>
+
+			{(!!client || !!item.case?.className) && (
+				<div className="pointer-events-none relative flex flex-wrap items-baseline gap-x-2 text-xs">
+					{!!client && <span className="font-medium text-foreground/85">{item.title}</span>}
+
+					{!!item.case?.className && (
+						<span className="truncate text-muted-foreground">
+							{formatPersonName(item.case.className)}
+						</span>
+					)}
+				</div>
+			)}
 
 			<div className="pointer-events-none relative flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
 				{!!item.case?.tribunal && (
@@ -113,15 +138,11 @@ export function DeadlineRow({
 			)}
 
 			<div className="pointer-events-none relative flex flex-wrap items-center gap-x-3 gap-y-1">
+				{item.warnings.some(isCanceledPublicationWarning) && <CanceledPublicationMark />}
+
 				<ConfidenceMark confidence={item.confidence} />
 
 				<AudienceMark audience={item.audience} />
-
-				{unconfirmed && (
-					<span className="rounded-full border border-primary/40 px-1.5 text-2xs font-medium text-primary">
-						{STATUS_LABELS.a_confirmar}
-					</span>
-				)}
 
 				{!!item.expectedDueAt && item.expectedDueAt !== item.dueAt && (
 					<span className="text-2xs text-muted-foreground">

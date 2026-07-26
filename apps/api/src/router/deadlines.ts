@@ -1,12 +1,12 @@
 import { type } from "arktype";
 import { DEADLINE_DATE_PATTERN, deadlineFilterFields } from "../features/deadlines/filters.ts";
 import { DeadlineManager } from "../features/deadlines/manager.ts";
-import { authed } from "../orpc.ts";
+import { synced } from "../orpc.ts";
 
 const deadlineIdSchema = type({ "+": "delete", id: "string.uuid" });
 
 export const deadlinesRouter = {
-	list: authed
+	list: synced
 		.input(
 			type({
 				"+": "delete",
@@ -16,30 +16,30 @@ export const deadlinesRouter = {
 			}),
 		)
 		.handler(({ input, context }) =>
-			new DeadlineManager(context.db).list({ ...input, lawyerId: context.lawyer.id }),
+			new DeadlineManager(context.db).list({
+				...input,
+				lawyerId: context.lawyer.id,
+				historyCutoffAt: context.lawyer.historyCutoffAt,
+			}),
 		),
 
-	summary: authed
+	summary: synced
 		.input(type({ "+": "delete", ...deadlineFilterFields, today: DEADLINE_DATE_PATTERN }))
 		.handler(({ input, context }) =>
-			new DeadlineManager(context.db).summary({ ...input, lawyerId: context.lawyer.id }),
+			new DeadlineManager(context.db).summary({
+				...input,
+				lawyerId: context.lawyer.id,
+				historyCutoffAt: context.lawyer.historyCutoffAt,
+			}),
 		),
 
-	get: authed
+	get: synced
 		.input(deadlineIdSchema)
 		.handler(({ input, context }) =>
 			new DeadlineManager(context.db).get({ ...input, lawyerId: context.lawyer.id }),
 		),
 
-	confirm: authed.input(deadlineIdSchema).handler(({ input, context }) =>
-		new DeadlineManager(context.db).setStatus({
-			...input,
-			lawyerId: context.lawyer.id,
-			status: "confirmado",
-		}),
-	),
-
-	complete: authed.input(deadlineIdSchema).handler(({ input, context }) =>
+	complete: synced.input(deadlineIdSchema).handler(({ input, context }) =>
 		new DeadlineManager(context.db).setStatus({
 			...input,
 			lawyerId: context.lawyer.id,
@@ -47,7 +47,7 @@ export const deadlinesRouter = {
 		}),
 	),
 
-	dismiss: authed.input(deadlineIdSchema).handler(({ input, context }) =>
+	dismiss: synced.input(deadlineIdSchema).handler(({ input, context }) =>
 		new DeadlineManager(context.db).setStatus({
 			...input,
 			lawyerId: context.lawyer.id,
@@ -55,7 +55,7 @@ export const deadlinesRouter = {
 		}),
 	),
 
-	reschedule: authed
+	reschedule: synced
 		.input(
 			type({ "+": "delete", id: "string.uuid", dueAt: DEADLINE_DATE_PATTERN, "note?": "string" }),
 		)
@@ -63,7 +63,7 @@ export const deadlinesRouter = {
 			new DeadlineManager(context.db).reschedule({ ...input, lawyerId: context.lawyer.id }),
 		),
 
-	create: authed
+	create: synced
 		.input(
 			type({
 				"+": "delete",
@@ -78,7 +78,7 @@ export const deadlinesRouter = {
 			new DeadlineManager(context.db).createManual({ ...input, lawyerId: context.lawyer.id }),
 		),
 
-	triage: authed
+	triage: synced
 		.input(
 			type({
 				"+": "delete",

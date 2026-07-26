@@ -1,9 +1,12 @@
+import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, redirect } from "@tanstack/react-router";
+import { formatPersonName } from "@/lib/format";
 import { Brand } from "./-shell/brand";
 import { ThemeToggle } from "./-shell/theme-toggle";
 import { accessQueryOptions } from "./-auth/access";
 import { LoginForm } from "./-auth/login-form";
 import { validateRedirectSearch } from "./-auth/redirect-search";
+import { sessionQueryOptions } from "./-auth/session";
 
 export const Route = createFileRoute("/login")({
 	validateSearch: validateRedirectSearch,
@@ -21,6 +24,7 @@ export const Route = createFileRoute("/login")({
 
 function LoginPage() {
 	const search = Route.useSearch();
+	const connected = useQuery(sessionQueryOptions).data?.lawyer;
 
 	return (
 		<main className="relative flex min-h-svh flex-col items-center justify-center px-5 py-12">
@@ -43,6 +47,13 @@ function LoginPage() {
 						você aparece. Não existe senha porque só lemos fonte pública do CNJ: o seu número de
 						inscrição já é o suficiente para encontrar as publicações.
 					</p>
+
+					{connected && (
+						<p className="mt-3 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+							{formatPersonName(connected.name)} continua conectado neste navegador. A OAB que você
+							informar agora entra ao lado, e você alterna entre as duas pelo menu do rodapé.
+						</p>
+					)}
 
 					<div className="my-5 h-px bg-border" />
 

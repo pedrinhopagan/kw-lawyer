@@ -5,16 +5,16 @@ import {
 	EVIDENCE_STAGES,
 } from "../features/evidence/classify.ts";
 import { EvidenceManager } from "../features/evidence/manager.ts";
-import { authed } from "../orpc.ts";
+import { synced } from "../orpc.ts";
 
 export const evidenceRouter = {
-	byCase: authed
+	byCase: synced
 		.input(type({ "+": "delete", cnjNumber: "string > 0" }))
 		.handler(({ input, context }) =>
 			new EvidenceManager(context.db).listByCase({ ...input, lawyerId: context.lawyer.id }),
 		),
 
-	correct: authed
+	correct: synced
 		.input(
 			type({
 				"+": "delete",
@@ -29,7 +29,7 @@ export const evidenceRouter = {
 			new EvidenceManager(context.db).correct({ ...input, lawyerId: context.lawyer.id }),
 		),
 
-	dismiss: authed.input(type({ "+": "delete", id: "string.uuid" })).handler(({ input, context }) =>
+	dismiss: synced.input(type({ "+": "delete", id: "string.uuid" })).handler(({ input, context }) =>
 		new EvidenceManager(context.db).setDismissed({
 			...input,
 			lawyerId: context.lawyer.id,
@@ -37,7 +37,7 @@ export const evidenceRouter = {
 		}),
 	),
 
-	restore: authed.input(type({ "+": "delete", id: "string.uuid" })).handler(({ input, context }) =>
+	restore: synced.input(type({ "+": "delete", id: "string.uuid" })).handler(({ input, context }) =>
 		new EvidenceManager(context.db).setDismissed({
 			...input,
 			lawyerId: context.lawyer.id,

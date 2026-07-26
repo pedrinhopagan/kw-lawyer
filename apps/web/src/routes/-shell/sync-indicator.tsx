@@ -1,55 +1,15 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { RefreshCwIcon, TriangleAlertIcon } from "lucide-react";
+import { PlugZapIcon, RefreshCwIcon, TriangleAlertIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import { formatEventDate } from "@/lib/format";
 import {
-	type SyncEvent,
+	reconnectSyncProgress,
 	syncProgressQueryOptions,
-	type SyncStatus,
 	syncStatusQueryOptions,
 	useStartSync,
 } from "./sync";
-
-const UNKNOWN_FAILURE = "Erro desconhecido durante a sincronização.";
-
-type RunningPhase = "descoberta" | "enriquecimento";
-
-type Counters = Pick<SyncEvent, "fetched" | "casesCreated" | "casesEnriched" | "movementsCreated">;
-
-type Run = SyncStatus["run"] | undefined;
-
-function detailOf(counters: Counters, phase: RunningPhase) {
-	if (phase === "descoberta") {
-		return `${counters.fetched} publicações, ${counters.casesCreated} processos`;
-	}
-
-	return `${counters.casesEnriched} processos, ${counters.movementsCreated} andamentos`;
-}
-
-function runningView(event: SyncEvent | undefined, run: Run) {
-	if (event?.phase === "descoberta" || event?.phase === "enriquecimento") {
-		return { phase: event.phase, detail: detailOf(event, event.phase) };
-	}
-
-	if (!event && run?.status === "em_execucao") {
-		return { phase: "descoberta" as const, detail: detailOf(run, "descoberta") };
-	}
-
-	return null;
-}
-
-function failureMessage(event: SyncEvent | undefined, run: Run) {
-	if (event?.phase === "falhou") {
-		return event.errorMessage ?? UNKNOWN_FAILURE;
-	}
-
-	if (!event && run?.status === "falhou") {
-		return run.errorMessage ?? UNKNOWN_FAILURE;
-	}
-
-	return null;
-}
+import { latestSyncSnapshot, SYNC_PHASE_COUNT, syncFailureOf, syncRunningView } from "./sync-view";
 
 export function SyncIndicator() {
 	const queryClient = useQueryClient();
@@ -57,25 +17,55 @@ export function SyncIndicator() {
 	const status = useQuery(syncStatusQueryOptions);
 	const startSync = useStartSync();
 
-	const running = runningView(progress.data, status.data?.run);
-	const failure = failureMessage(progress.data, status.data?.run);
+	const snapshot = latestSyncSnapshot(progress.data, status.data?.run);
+	const running = syncRunningView(snapshot);
+	const failure = syncFailureOf(snapshot);
 	const lastSyncedAt = status.data?.lastSyncedAt;
+
+	if (running && progress.isError) {
+		return (
+			<div className="border-t border-sidebar-border px-3 py-2.5">
+				<div className="flex items-center gap-2">
+					<PlugZapIcon className="size-3 shrink-0 text-muted-foreground" />
+					<span className="text-xs font-medium">Progresso fora do ar</span>
+				</div>
+				<p className="mt-1 text-2xs leading-relaxed text-muted-foreground">
+					A sincronização continua no servidor, mas esta tela parou de receber o andamento dela.
+				</p>
+				<Button
+					variant="ghost"
+					size="xs"
+					className="mt-1 -ml-2 h-6 text-2xs"
+					onClick={() => reconnectSyncProgress(queryClient)}
+				>
+					<RefreshCwIcon />
+					Recarregar o progresso
+				</Button>
+			</div>
+		);
+	}
 
 	if (running) {
 		return (
 			<div className="border-t border-sidebar-border px-3 py-2.5">
 				<div className="flex items-center gap-2">
 					<RefreshCwIcon className="size-3 shrink-0 animate-spin text-primary" />
-					<span className="text-xs font-medium">
-						{running.phase === "descoberta" && "Buscando publicações"}
-						{running.phase === "enriquecimento" && "Lendo andamentos"}
+					<span className="min-w-0 flex-1 truncate text-xs font-medium">{running.label}</span>
+					<span className="shrink-0 font-mono text-2xs tabular-nums text-muted-foreground">
+						{running.step}/{SYNC_PHASE_COUNT}
 					</span>
 				</div>
 				<p className="mt-1 truncate font-mono text-2xs tabular-nums text-muted-foreground">
 					{running.detail}
 				</p>
 				<div className="mt-2 h-px w-full overflow-hidden bg-border">
-					<div className="h-full w-1/3 animate-sweep bg-primary" />
+					{running.ratio === null && <div className="h-full w-1/3 animate-sweep bg-primary" />}
+					{running.ratio !== null && (
+						<div
+							className="h-full bg-primary transition-[width] duration-500 ease-out"
+							style={{ width: `${running.ratio * 100}%` }}
+						/>
+					)}
 				</div>
 			</div>
 		);

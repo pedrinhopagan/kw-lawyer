@@ -8,8 +8,10 @@ import { decisionsRouter } from "./router/decisions.ts";
 import { evidenceRouter } from "./router/evidence.ts";
 import { hubRouter } from "./router/hub.ts";
 import { incidentsRouter } from "./router/incidents.ts";
+import { notificationsRouter } from "./router/notifications.ts";
 import { oabsRouter } from "./router/oabs.ts";
 import { publicationsRouter } from "./router/publications.ts";
+import { radarRouter } from "./router/radar.ts";
 import { syncRouter } from "./router/sync.ts";
 
 export const appRouter = {
@@ -26,6 +28,8 @@ export const appRouter = {
 	oabs: oabsRouter,
 	publications: publicationsRouter,
 	calendar: calendarRouter,
+	notifications: notificationsRouter,
+	radar: radarRouter,
 };
 
 export type AppRouter = typeof appRouter;

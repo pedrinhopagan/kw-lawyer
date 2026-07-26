@@ -14,6 +14,8 @@ import { createRouterClient } from "@orpc/server";
 import { expect, test } from "bun:test";
 import { assertDefined, expectOrpcError } from "./utils/assertions.ts";
 import { withRollback } from "./utils/db.ts";
+import { testContext } from "./utils/orpc.ts";
+import { SEED_HISTORY_CUTOFF } from "./utils/seed.ts";
 
 function cnjOf(scenario: number, index: number) {
 	return `${`${scenario}${index}`.padStart(7, "0")}8520258260114`;
@@ -22,12 +24,20 @@ function cnjOf(scenario: number, index: number) {
 async function seedLawyer(tx: Tx, scenario: number, slot: number, name: string) {
 	const [lawyer] = await tx
 		.insert(lawyers)
-		.values({ name, oabNumber: `${scenario}0${slot}`, oabUf: "SP" })
+		.values({
+			name,
+			oabNumber: `${scenario}0${slot}`,
+			oabUf: "SP",
+			historyCutoffAt: SEED_HISTORY_CUTOFF,
+			onboardingState: "pronto",
+		})
 		.returning({
 			id: lawyers.id,
 			name: lawyers.name,
 			oabNumber: lawyers.oabNumber,
 			oabUf: lawyers.oabUf,
+			historyCutoffAt: lawyers.historyCutoffAt,
+			onboardingState: lawyers.onboardingState,
 		});
 
 	assertDefined(lawyer);
@@ -85,7 +95,6 @@ async function seedPublication(
 			textHtml: `<p>${input.textPlain}</p>`,
 			textPlain: input.textPlain,
 			excerpt: summarize(extractActBody(input.textPlain)),
-			raw: { origem: "teste" },
 		})
 		.returning({ id: publications.id });
 
@@ -126,10 +135,10 @@ test(
 		});
 
 		const aliceClient = createRouterClient(publicationsRouter, {
-			context: { lawyer: alice, access: true, db: tx },
+			context: testContext(tx, alice),
 		});
 		const brunoClient = createRouterClient(publicationsRouter, {
-			context: { lawyer: bruno, access: true, db: tx },
+			context: testContext(tx, bruno),
 		});
 
 		const aliceList = await aliceClient.list({});
@@ -173,7 +182,7 @@ test(
 		});
 
 		const client = createRouterClient(publicationsRouter, {
-			context: { lawyer: alice, access: true, db: tx },
+			context: testContext(tx, alice),
 		});
 
 		const unread = await client.list({ onlyUnread: true });
@@ -199,6 +208,88 @@ test(
 );
 
 test(
+	"publications.list busca por teor, vara e número do processo",
+	withRollback(async (tx) => {
+		const scenario = 9210;
+		const alice = await seedLawyer(tx, scenario, 1, "ALICE");
+		const cnjNumber = cnjOf(scenario, 1);
+
+		await seedPublication(tx, {
+			lawyerIds: [alice.id],
+			cnjNumber,
+			availableAt: "2026-06-01",
+			textPlain: "designada audiência de conciliação para o dia 10",
+		});
+		await seedPublication(tx, {
+			lawyerIds: [alice.id],
+			availableAt: "2026-06-02",
+			textPlain: "manifeste-se sobre os embargos de declaração",
+		});
+
+		const client = createRouterClient(publicationsRouter, {
+			context: testContext(tx, alice),
+		});
+
+		const porTeor = await client.list({ query: "AUDIÊNCIA" });
+
+		expect(porTeor.total).toBe(1);
+		expect(porTeor.items[0]?.cnjNumber).toBe(cnjNumber);
+
+		const porVara = await client.list({ query: "vara cível" });
+
+		expect(porVara.total).toBe(2);
+
+		const porCnj = await client.list({ query: formatCnj(cnjNumber) });
+
+		expect(porCnj.total).toBe(1);
+		expect(porCnj.items[0]?.cnjNumber).toBe(cnjNumber);
+
+		const semNada = await client.list({ query: "%" });
+
+		expect(semNada.total).toBe(0);
+	}),
+);
+
+test(
+	"publications.readAll marca só as não lidas do advogado que batem com os filtros",
+	withRollback(async (tx) => {
+		const scenario = 9211;
+		const alice = await seedLawyer(tx, scenario, 1, "ALICE");
+		const bruno = await seedLawyer(tx, scenario, 2, "BRUNO");
+
+		const shared = await seedPublication(tx, {
+			lawyerIds: [alice.id, bruno.id],
+			availableAt: "2026-06-10",
+			textPlain: "publicação que os dois recebem",
+		});
+		await seedPublication(tx, {
+			lawyerIds: [alice.id],
+			tribunal: "TRF3",
+			availableAt: "2026-06-11",
+			textPlain: "publicação da alice no trf3",
+		});
+
+		const aliceClient = createRouterClient(publicationsRouter, {
+			context: testContext(tx, alice),
+		});
+		const brunoClient = createRouterClient(publicationsRouter, {
+			context: testContext(tx, bruno),
+		});
+
+		expect(await aliceClient.readAll({ tribunal: "tjsp" })).toEqual({ read: 1 });
+
+		expect((await aliceClient.list({})).unread).toBe(1);
+		expect((await aliceClient.get({ id: shared })).readAt).not.toBeNull();
+		expect((await brunoClient.get({ id: shared })).readAt).toBeNull();
+		expect((await brunoClient.list({})).unread).toBe(1);
+
+		expect(await aliceClient.readAll({})).toEqual({ read: 1 });
+		expect(await aliceClient.readAll({})).toEqual({ read: 0 });
+		expect((await aliceClient.list({})).unread).toBe(0);
+	}),
+);
+
+test(
 	"publications.list pagina devolvendo o total inteiro em toda página",
 	withRollback(async (tx) => {
 		const scenario = 9203;
@@ -213,7 +304,7 @@ test(
 		}
 
 		const client = createRouterClient(publicationsRouter, {
-			context: { lawyer: alice, access: true, db: tx },
+			context: testContext(tx, alice),
 		});
 
 		const firstPage = await client.list({ limit: 2, offset: 0 });
@@ -241,7 +332,7 @@ test(
 		await seedPublication(tx, { lawyerIds: [alice.id], availableAt: "2026-05-05", textPlain });
 
 		const client = createRouterClient(publicationsRouter, {
-			context: { lawyer: alice, access: true, db: tx },
+			context: testContext(tx, alice),
 		});
 		const item = (await client.list({})).items[0];
 
@@ -263,7 +354,7 @@ test(
 		await seedPublication(tx, { lawyerIds: [alice.id], availableAt: "2026-05-06", textPlain });
 
 		const client = createRouterClient(publicationsRouter, {
-			context: { lawyer: alice, access: true, db: tx },
+			context: testContext(tx, alice),
 		});
 		const item = (await client.list({})).items[0];
 
@@ -296,10 +387,10 @@ test(
 		});
 
 		const aliceClient = createRouterClient(publicationsRouter, {
-			context: { lawyer: alice, access: true, db: tx },
+			context: testContext(tx, alice),
 		});
 		const brunoClient = createRouterClient(publicationsRouter, {
-			context: { lawyer: bruno, access: true, db: tx },
+			context: testContext(tx, bruno),
 		});
 
 		const found = await aliceClient.get({ id: publicationId });
@@ -338,10 +429,10 @@ test(
 		});
 
 		const aliceClient = createRouterClient(publicationsRouter, {
-			context: { lawyer: alice, access: true, db: tx },
+			context: testContext(tx, alice),
 		});
 		const brunoClient = createRouterClient(publicationsRouter, {
-			context: { lawyer: bruno, access: true, db: tx },
+			context: testContext(tx, bruno),
 		});
 
 		expect((await aliceClient.list({})).unread).toBe(2);
@@ -376,13 +467,13 @@ test(
 		});
 
 		const brunoClient = createRouterClient(publicationsRouter, {
-			context: { lawyer: bruno, access: true, db: tx },
+			context: testContext(tx, bruno),
 		});
 
 		await expectOrpcError(brunoClient.read({ id: daAlice }), "NOT_FOUND");
 
 		const aliceClient = createRouterClient(publicationsRouter, {
-			context: { lawyer: alice, access: true, db: tx },
+			context: testContext(tx, alice),
 		});
 
 		expect((await aliceClient.get({ id: daAlice })).readAt).toBeNull();

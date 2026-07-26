@@ -38,7 +38,7 @@ export type DecisionOutcome = (typeof DECISION_OUTCOMES)[number];
 
 export type DecisionEffect = (typeof DECISION_EFFECTS)[number];
 
-export type DecisionConfidence = "alta" | "media" | "baixa";
+export type DecisionSpeciesConfidence = "alta" | "media" | "baixa";
 
 const SNIPPET_LENGTH = 520;
 
@@ -276,7 +276,7 @@ export interface DecisionClassification {
 	outcome: DecisionOutcome | null;
 	effects: DecisionEffect[];
 	snippet: string;
-	confidence: DecisionConfidence;
+	speciesConfidence: DecisionSpeciesConfidence;
 }
 
 function headerOf(source: CaseSource) {
@@ -383,25 +383,31 @@ function snippetOf(display: string, text: string) {
 	return snippetAround(display, found.index, SNIPPET_LENGTH);
 }
 
-function confidenceOf(input: {
-	speciesFromCode: boolean;
-	speciesFromHeader: boolean;
-	outcomeFromCode: boolean;
-	outcome: DecisionOutcome | null;
-}): DecisionConfidence {
-	if (input.outcomeFromCode || (input.speciesFromCode && !!input.outcome)) {
+// É a espécie que escolhe o recurso, o prazo e o preparo, então a confiança medida aqui é a dela, não
+// a do resultado: um código que só diz "embargos rejeitados" não prova que o ato é sentença. Espécie
+// deduzida do texto por regex, ou desmentida pelo cabeçalho, nunca sai como certeza.
+function speciesConfidenceOf(input: {
+	codeSpecies: DecisionSpecies | undefined;
+	textSpecies: DecisionSpecies | null;
+	headerSpecies: DecisionSpecies | null;
+}): DecisionSpeciesConfidence {
+	if (input.codeSpecies) {
 		return "alta";
 	}
 
-	if (input.speciesFromHeader && !!input.outcome) {
-		return "alta";
+	if (input.textSpecies && input.headerSpecies) {
+		if (input.textSpecies === input.headerSpecies) {
+			return "alta";
+		}
+
+		return "baixa";
 	}
 
-	if (input.speciesFromCode || input.speciesFromHeader || !!input.outcome) {
-		return "media";
+	if (input.textSpecies) {
+		return "baixa";
 	}
 
-	return "baixa";
+	return "media";
 }
 
 export function classifyDecision(source: CaseSource): DecisionClassification | null {
@@ -414,7 +420,8 @@ export function classifyDecision(source: CaseSource): DecisionClassification | n
 
 	const codeSpecies = SPECIES_BY_CODE[code];
 	const headerSpecies = speciesFromHeader(header);
-	const species = codeSpecies ?? speciesFromText(text) ?? headerSpecies;
+	const textSpecies = speciesFromText(text);
+	const species = codeSpecies ?? textSpecies ?? headerSpecies;
 
 	if (!species) {
 		return null;
@@ -437,11 +444,6 @@ export function classifyDecision(source: CaseSource): DecisionClassification | n
 		outcome,
 		effects,
 		snippet: snippetOf(display, text),
-		confidence: confidenceOf({
-			speciesFromCode: !!codeSpecies,
-			speciesFromHeader: !!headerSpecies,
-			outcomeFromCode: !!codeOutcome,
-			outcome,
-		}),
+		speciesConfidence: speciesConfidenceOf({ codeSpecies, textSpecies, headerSpecies }),
 	};
 }

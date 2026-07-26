@@ -6,7 +6,7 @@ import { calendarIntegrations } from "../../db/schema/calendar_integrations.ts";
 import { cases } from "../../db/schema/cases.ts";
 import { deadlines } from "../../db/schema/deadlines.ts";
 import { googleCalendarConfigured } from "../../env.ts";
-import { FORENSIC_TIME_ZONE } from "../deadlines/calendar.ts";
+import { forensicToday } from "../deadlines/calendar.ts";
 import {
 	CLOSED_STATUSES,
 	type DeadlineFilters,
@@ -31,6 +31,7 @@ type IntegrationTokens = Pick<
 
 interface SyncInput {
 	lawyerId: string;
+	historyCutoffAt: string;
 	filters: DeadlineFilters;
 }
 
@@ -138,7 +139,7 @@ export class CalendarManager {
 
 		const integration = await this.requireIntegration(input.lawyerId);
 		const accessToken = await this.freshAccessToken(integration);
-		const today = new Date().toLocaleDateString("en-CA", { timeZone: FORENSIC_TIME_ZONE });
+		const today = forensicToday();
 		const result = { created: 0, updated: 0, unchanged: 0, removed: 0, pending: 0 };
 
 		while (result.removed < SYNC_WRITE_LIMIT) {
@@ -424,7 +425,11 @@ export class CalendarManager {
 			)
 			.where(
 				and(
-					deadlineWhere({ lawyerId: input.lawyerId, filters: input.filters }),
+					deadlineWhere({
+						lawyerId: input.lawyerId,
+						historyCutoffAt: input.historyCutoffAt,
+						filters: input.filters,
+					}),
 					inArray(deadlines.status, OPEN_STATUSES),
 				),
 			)

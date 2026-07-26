@@ -1,9 +1,9 @@
 import { index, integer, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import type {
-	DecisionConfidence,
 	DecisionEffect,
 	DecisionOutcome,
 	DecisionSpecies,
+	DecisionSpeciesConfidence,
 } from "../../features/decisions/classify.ts";
 import { cases } from "./cases.ts";
 import { movements } from "./movements.ts";
@@ -32,7 +32,10 @@ export const caseDecisions = pgTable(
 		outcome: text("outcome").$type<DecisionOutcome>(),
 		effects: jsonb("effects").$type<DecisionEffect[]>().notNull().default([]),
 		snippet: text("snippet").notNull(),
-		confidence: text("confidence").$type<DecisionConfidence>().notNull().default("baixa"),
+		speciesConfidence: text("species_confidence")
+			.$type<DecisionSpeciesConfidence>()
+			.notNull()
+			.default("baixa"),
 		origin: text("origin").$type<CaseDecisionOrigin>().notNull().default("automatico"),
 		note: text("note"),
 		dismissedAt: timestamp("dismissed_at", { withTimezone: true }),

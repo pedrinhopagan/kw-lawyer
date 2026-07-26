@@ -30,11 +30,14 @@ const datajudMovimentoSchema = type({
 });
 
 export const datajudSourceSchema = type({
+	id: "string | number | null = null",
 	numeroProcesso: "string | null = null",
 	classe: datajudNamedSchema.or("null").default(null),
 	sistema: datajudNamedSchema.or("null").default(null),
+	formato: datajudNamedSchema.or("null").default(null),
 	tribunal: "string | null = null",
 	grau: "string | null = null",
+	dataHoraUltimaAtualizacao: "string | null = null",
 	dataAjuizamento: "string | null = null",
 	nivelSigilo: "number | null = null",
 	orgaoJulgador: datajudOrgaoSchema.or("null").default(null),
@@ -48,10 +51,18 @@ export const datajudSourceSchema = type({
 		.default(() => []),
 });
 
+// O total é o que denuncia o truncamento do lote: sem ele, o CNJ que o Elasticsearch deixou de fora
+// do teto de `size` viraria "processo sem registro" na tela e a reconciliação apagaria a instância
+// que ficou de fora do corte. Resposta sem total é resposta que o app não sabe ler.
+const datajudTotalSchema = type({ value: "number" })
+	.pipe(({ value }) => value)
+	.or("number");
+
 export const datajudResponseSchema = type({
 	hits: {
-		hits: type({ "_source?": "unknown" })
-			.pipe(({ _source }) => _source)
+		total: datajudTotalSchema,
+		hits: type({ _id: "string | null = null", "_source?": "unknown" })
+			.pipe(({ _id, _source }) => ({ documentId: _id, source: _source }))
 			.array(),
 	},
 });

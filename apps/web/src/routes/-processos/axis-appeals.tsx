@@ -11,6 +11,7 @@ import {
 	countLabel,
 	OUTCOME_LABELS,
 	SPECIES_LABELS,
+	SPECIES_READING_LABELS,
 } from "@/lib/legal-labels";
 import { actDate, UNIT_LABELS } from "@/lib/deadline-meta";
 import { orpc } from "@/lib/orpc";
@@ -62,6 +63,9 @@ function AppealCard({ item, cnjNumber }: { item: CaseAppealItem; cnjNumber: stri
 				<span className="text-[0.8125rem] font-semibold">
 					{SPECIES_LABELS[item.decision.species]}
 				</span>
+				{!!SPECIES_READING_LABELS[item.decision.speciesConfidence] && (
+					<Chip tone="alert">{SPECIES_READING_LABELS[item.decision.speciesConfidence]}</Chip>
+				)}
 				{!!item.decision.outcome && (
 					<Chip tone="accent">{OUTCOME_LABELS[item.decision.outcome]}</Chip>
 				)}
@@ -118,12 +122,20 @@ function AppealCard({ item, cnjNumber }: { item: CaseAppealItem; cnjNumber: stri
 										{option.admissibilityBasis}
 									</span>
 									{option.needsPreparo && <Chip>exige preparo</Chip>}
+									{option.confidence !== "alta" && <Chip>confira a regra</Chip>}
 									{isChoice && <Chip tone="accent">escolhido</Chip>}
 								</div>
 
 								{!!option.condition && (
 									<p className="mt-1 text-xs leading-relaxed text-muted-foreground">
 										{option.condition}
+									</p>
+								)}
+
+								{!!option.review && (
+									<p className="mt-1.5 flex items-start gap-1.5 rounded-[3px] border border-border bg-muted/40 p-1.5 text-2xs leading-relaxed text-muted-foreground">
+										<TriangleAlertIcon className="mt-[2px] size-3 shrink-0" />
+										<span>{option.review}</span>
 									</p>
 								)}
 							</button>

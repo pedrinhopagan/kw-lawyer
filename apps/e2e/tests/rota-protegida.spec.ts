@@ -5,6 +5,9 @@ import { enterGate, loginWithOab } from "../playwright/ui.ts";
 
 const BUSCA = "JOANA";
 
+// Esta spec prova o gate e o login desde o zero, então ela não herda o cookie de acesso da suíte.
+test.use({ storageState: { cookies: [], origins: [] } });
+
 test("rota autenticada sem sessão vai para o login e volta ao destino depois de entrar", async ({
 	page,
 	scenario: _scenario,

@@ -23,10 +23,12 @@ export function publicationTitle(publication: PublicationKind) {
 	return `${communication} / ${document}`;
 }
 
-export function fullDate(availableAt: string) {
-	const date = parseISO(availableAt);
+export function fullDate(value: string | Date) {
+	if (typeof value === "string") {
+		return format(parseISO(value), "d 'de' MMMM 'de' yyyy", { locale: ptBR });
+	}
 
-	return format(date, "d 'de' MMMM 'de' yyyy", { locale: ptBR });
+	return format(value, "d 'de' MMMM 'de' yyyy", { locale: ptBR });
 }
 
 export function shortDate(availableAt: string) {

@@ -27,6 +27,7 @@ export const movements = pgTable(
 		type: text("type"),
 		summary: text("summary").notNull(),
 		source: text("source").$type<MovementSource>().notNull().default("publication"),
+		grau: text("grau"),
 		externalCode: text("external_code"),
 		complements: jsonb("complements").$type<MovementComplement[]>(),
 		createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

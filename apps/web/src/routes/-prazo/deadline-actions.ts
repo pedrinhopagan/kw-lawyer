@@ -11,17 +11,10 @@ export function useDeadlineActions() {
 		await Promise.all(namespaces.map((queryKey) => queryClient.invalidateQueries({ queryKey })));
 	}
 
-	const confirm = useMutation(
-		orpc.deadlines.confirm.mutationOptions({
-			onSuccess: refreshDeadlines,
-			onError: () => toast.error("Não foi possível confirmar o prazo. Tente de novo."),
-		}),
-	);
-
 	const complete = useMutation(
 		orpc.deadlines.complete.mutationOptions({
 			onSuccess: async () => {
-				await queryClient.invalidateQueries({ queryKey: orpc.deadlines.key() });
+				await refreshDeadlines();
 				toast.success("Prazo marcado como cumprido.");
 			},
 			onError: () => toast.error("Não foi possível marcar o prazo como cumprido. Tente de novo."),
@@ -31,22 +24,22 @@ export function useDeadlineActions() {
 	const dismiss = useMutation(
 		orpc.deadlines.dismiss.mutationOptions({
 			onSuccess: async () => {
-				await queryClient.invalidateQueries({ queryKey: orpc.deadlines.key() });
-				toast.success("Prazo descartado da agenda.");
+				await refreshDeadlines();
+				toast.success("Prazo tirado da agenda: não é prazo seu.");
 			},
-			onError: () => toast.error("Não foi possível descartar o prazo. Tente de novo."),
+			onError: () => toast.error("Não foi possível tirar o prazo da agenda. Tente de novo."),
 		}),
 	);
 
 	const reschedule = useMutation(
 		orpc.deadlines.reschedule.mutationOptions({
 			onSuccess: async () => {
-				await queryClient.invalidateQueries({ queryKey: orpc.deadlines.key() });
+				await refreshDeadlines();
 				toast.success("Data do prazo atualizada.");
 			},
 			onError: () => toast.error("Não foi possível alterar a data. Tente de novo."),
 		}),
 	);
 
-	return { confirm, complete, dismiss, reschedule };
+	return { complete, dismiss, reschedule };
 }

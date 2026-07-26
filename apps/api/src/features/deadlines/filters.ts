@@ -10,7 +10,7 @@ import {
 
 export const DEADLINE_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/u;
 
-export const OPEN_STATUSES: DeadlineStatus[] = ["a_confirmar", "confirmado"];
+export const OPEN_STATUSES: DeadlineStatus[] = ["pendente"];
 
 export const CLOSED_STATUSES: DeadlineStatus[] = ["cumprido", "descartado"];
 
@@ -19,7 +19,7 @@ export const THIRD_PARTY_AUDIENCE: DeadlineAudience = "terceiro";
 export const deadlineFilterFields = {
 	"from?": DEADLINE_DATE_PATTERN,
 	"to?": DEADLINE_DATE_PATTERN,
-	"status?": "('a_confirmar' | 'confirmado' | 'cumprido' | 'descartado')[]",
+	"status?": "('pendente' | 'cumprido' | 'descartado')[]",
 	"audience?": "('partes' | 'terceiro' | 'indefinido')[]",
 	"confidence?": "('alta' | 'media' | 'baixa')[]",
 	"origin?": "('automatico' | 'manual')[]",
@@ -28,6 +28,7 @@ export const deadlineFilterFields = {
 	"query?": "string <= 200",
 	"actionable?": "boolean",
 	"caseId?": "string.uuid",
+	"includeHistory?": "boolean",
 } as const;
 
 export interface DeadlineFilters {
@@ -42,10 +43,12 @@ export interface DeadlineFilters {
 	query?: string;
 	actionable?: boolean;
 	caseId?: string;
+	includeHistory?: boolean;
 }
 
 export interface DeadlineWhereParams {
 	lawyerId: string;
+	historyCutoffAt: string;
 	filters: DeadlineFilters;
 	allStatuses?: boolean;
 }
@@ -65,6 +68,18 @@ function statusCondition(params: DeadlineWhereParams) {
 	);
 }
 
+function floorCondition(params: DeadlineWhereParams) {
+	if (params.filters.from) {
+		return gte(deadlines.dueAt, params.filters.from);
+	}
+
+	if (params.filters.includeHistory) {
+		return;
+	}
+
+	return gte(deadlines.dueAt, params.historyCutoffAt);
+}
+
 function searchCondition(query: string) {
 	const digits = query.replaceAll(/\D/gu, "");
 
@@ -81,7 +96,7 @@ export function deadlineWhere(params: DeadlineWhereParams) {
 	return and(
 		eq(deadlines.lawyerId, params.lawyerId),
 		params.filters.caseId ? eq(deadlines.caseId, params.filters.caseId) : undefined,
-		params.filters.from ? gte(deadlines.dueAt, params.filters.from) : undefined,
+		floorCondition(params),
 		params.filters.to ? lte(deadlines.dueAt, params.filters.to) : undefined,
 		params.filters.audience?.length
 			? inArray(deadlines.audience, params.filters.audience)

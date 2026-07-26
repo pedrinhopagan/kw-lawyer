@@ -1,6 +1,14 @@
-import { InboxIcon, RefreshCwIcon, SearchXIcon, TriangleAlertIcon } from "lucide-react";
+import {
+	HistoryIcon,
+	InboxIcon,
+	RefreshCwIcon,
+	SearchXIcon,
+	TriangleAlertIcon,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { usePublicationFloor } from "@/hooks/use-history-cutoff";
+import { shortDate } from "./publication-meta";
 
 const SKELETON_ROWS = [0, 1, 2, 3, 4, 5, 6, 7];
 
@@ -27,7 +35,17 @@ export function InboxSkeleton() {
 	);
 }
 
-export function InboxEmpty({ filtered, onClear }: { filtered: boolean; onClear: () => void }) {
+export function InboxEmpty({
+	filtered,
+	onClear,
+	onHistory,
+}: {
+	filtered: boolean;
+	onClear: () => void;
+	onHistory: () => void;
+}) {
+	const cutoff = usePublicationFloor();
+
 	if (filtered) {
 		return (
 			<div className="flex flex-col items-center gap-3 px-6 py-20 text-center">
@@ -46,9 +64,18 @@ export function InboxEmpty({ filtered, onClear }: { filtered: boolean; onClear: 
 		<div className="flex flex-col items-center gap-3 px-6 py-20 text-center">
 			<InboxIcon className="size-5 text-muted-foreground" />
 			<p className="max-w-sm text-sm leading-relaxed text-muted-foreground">
-				Nada publicado nas suas inscrições até agora. A busca no DJEN roda sozinha sempre que você
-				abre o painel, e o que sair no diário aparece aqui na manhã seguinte.
+				{!!cutoff && `Nada publicado nas suas inscrições desde ${shortDate(cutoff)}. `}
+				{!cutoff && "Nada publicado nas suas inscrições até agora. "}
+				A busca no DJEN roda sozinha sempre que você abre o painel, e o que sair no diário aparece
+				aqui na manhã seguinte.
 			</p>
+
+			{!!cutoff && (
+				<Button variant="outline" size="sm" onClick={onHistory}>
+					<HistoryIcon />
+					Ver todo o histórico
+				</Button>
+			)}
 		</div>
 	);
 }

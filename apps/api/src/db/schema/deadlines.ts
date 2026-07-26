@@ -14,7 +14,7 @@ import { cases } from "./cases.ts";
 import { lawyers } from "./lawyers.ts";
 import { publications } from "./publications.ts";
 
-export type DeadlineStatus = "a_confirmar" | "confirmado" | "cumprido" | "descartado";
+export type DeadlineStatus = "pendente" | "cumprido" | "descartado";
 
 export type DeadlineOrigin = "automatico" | "manual";
 
@@ -60,7 +60,7 @@ export const deadlines = pgTable(
 		startsAt: date("starts_at"),
 		dueAt: date("due_at").notNull(),
 		expectedDueAt: date("expected_due_at"),
-		status: text("status").$type<DeadlineStatus>().notNull().default("a_confirmar"),
+		status: text("status").$type<DeadlineStatus>().notNull().default("pendente"),
 		origin: text("origin").$type<DeadlineOrigin>().notNull().default("automatico"),
 		confidence: text("confidence").$type<DeadlineConfidence>().notNull().default("baixa"),
 		audience: text("audience").$type<DeadlineAudience>().notNull().default("indefinido"),
@@ -70,6 +70,7 @@ export const deadlines = pgTable(
 		calculation: jsonb("calculation").$type<DeadlineCalculationLog | null>(),
 		engineVersion: integer("engine_version").notNull().default(1),
 		completedAt: timestamp("completed_at", { withTimezone: true }),
+		rescheduledAt: timestamp("rescheduled_at", { withTimezone: true }),
 		createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp("updated_at", { withTimezone: true })
 			.notNull()

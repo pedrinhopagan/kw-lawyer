@@ -1,15 +1,15 @@
 import { type } from "arktype";
 import { AppealManager } from "../features/appeals/manager.ts";
-import { authed } from "../orpc.ts";
+import { synced } from "../orpc.ts";
 
 export const appealsRouter = {
-	byCase: authed
+	byCase: synced
 		.input(type({ "+": "delete", cnjNumber: "string > 0" }))
 		.handler(({ input, context }) =>
 			new AppealManager(context.db).byCase({ ...input, lawyerId: context.lawyer.id }),
 		),
 
-	choose: authed
+	choose: synced
 		.input(
 			type({
 				"+": "delete",

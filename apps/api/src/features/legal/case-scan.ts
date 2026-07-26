@@ -1,7 +1,8 @@
-import { and, desc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import type { Db, Tx } from "../../db/client.ts";
 import type { MovementComplement } from "../../db/schema/movements.ts";
 import { type CaseScanStats, type CaseScanner, caseScans } from "../../db/schema/case_scans.ts";
+import { caseLawyers } from "../../db/schema/case_lawyers.ts";
 import { cases } from "../../db/schema/cases.ts";
 import { movements } from "../../db/schema/movements.ts";
 import { publications } from "../../db/schema/publications.ts";
@@ -32,6 +33,14 @@ export interface CaseScanScope {
 	scanner: CaseScanner;
 	engineVersion: number;
 	caseIds?: string[];
+	// Recorte por carteira em vez de por lista. Quem varre a partir de publicação nova sabe os ids que
+	// mudaram; quem varre estado precisa alcançar também o processo que só o DataJud mexeu e o que
+	// nunca foi classificado, e nenhum dos dois aparece numa lista vinda do DJEN.
+	lawyerId?: string;
+	// Processos que o chamador sabe terem mudado. Quem acabou de gravar movimento novo não precisa
+	// reinferir isso comparando carimbos: `created_at` sai de `now()`, que é congelado dentro de uma
+	// transação, então a comparação responde "nada mudou" justamente para quem mudou agora.
+	touched?: string[];
 	force?: boolean;
 }
 
@@ -42,13 +51,28 @@ export async function staleCaseIds(scope: CaseScanScope) {
 		.leftJoin(caseScans, and(eq(caseScans.caseId, cases.id), eq(caseScans.scanner, scope.scanner)))
 		.where(
 			and(
-				scope.caseIds?.length ? inArray(cases.id, scope.caseIds) : undefined,
+				scope.lawyerId
+					? sql`exists (
+							select 1 from ${caseLawyers}
+							where ${caseLawyers.caseId} = ${cases.id}
+								and ${caseLawyers.lawyerId} = ${scope.lawyerId}
+						)`
+					: undefined,
+				!scope.lawyerId && scope.caseIds?.length ? inArray(cases.id, scope.caseIds) : undefined,
 				scope.force
 					? undefined
 					: or(
+							scope.touched?.length ? inArray(cases.id, scope.touched) : undefined,
 							isNull(caseScans.id),
 							lt(caseScans.engineVersion, scope.engineVersion),
-							gt(cases.lastMovementAt, caseScans.scannedAt),
+							// O que torna o processo desatualizado é a chegada do movimento, não a data que
+							// ele carrega. O tribunal publica hoje o ato de semana passada, e comparar a data
+							// do ato com a hora da varredura dizia que nada tinha mudado.
+							sql`exists (
+								select 1 from ${movements}
+								where ${movements.caseId} = ${cases.id}
+									and ${movements.createdAt} > ${caseScans.scannedAt}
+							)`,
 						),
 			),
 		);
@@ -102,6 +126,33 @@ export async function caseSources(db: Db | Tx, caseIds: string[]) {
 	}
 
 	return byCase;
+}
+
+// A marca do chunk inteiro sai em uma escrita: varredura que grava linha por linha vira uma ida ao
+// banco por processo, que é justamente o que a varredura em lote existe para evitar.
+export async function recordCaseScans(input: {
+	db: Db | Tx;
+	caseIds: string[];
+	scanner: CaseScanner;
+	engineVersion: number;
+}) {
+	if (!input.caseIds.length) {
+		return;
+	}
+
+	await input.db
+		.insert(caseScans)
+		.values(
+			input.caseIds.map((caseId) => ({
+				caseId,
+				scanner: input.scanner,
+				engineVersion: input.engineVersion,
+			})),
+		)
+		.onConflictDoUpdate({
+			target: [caseScans.caseId, caseScans.scanner],
+			set: { engineVersion: input.engineVersion, scannedAt: new Date() },
+		});
 }
 
 export async function recordCaseScan(input: {

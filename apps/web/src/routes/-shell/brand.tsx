@@ -1,12 +1,10 @@
-import { ScaleIcon } from "lucide-react";
+import { LogoMark } from "@/components/logo-mark";
 import { cn } from "@/lib/cn";
 
 export function Brand({ className }: { className?: string }) {
 	return (
 		<div className={cn("flex items-center gap-2.5", className)}>
-			<span className="grid size-7 shrink-0 place-items-center rounded-[5px] bg-foreground text-background">
-				<ScaleIcon className="size-4" />
-			</span>
+			<LogoMark className="size-7 text-foreground" />
 			<span className="flex min-w-0 flex-col">
 				<span className="font-mono text-sm font-semibold leading-none tracking-[-0.03em]">
 					kw-lawyer

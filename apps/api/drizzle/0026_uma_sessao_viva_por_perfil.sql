@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "sessions_device_lawyer_open_idx" ON "sessions" USING btree ("device_id","lawyer_id") WHERE "sessions"."revoked_at" is null;

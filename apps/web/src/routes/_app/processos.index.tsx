@@ -123,6 +123,7 @@ function CasesPage() {
 							<Button
 								variant="outline"
 								size="xs"
+								className="h-9 px-3 sm:h-6"
 								disabled={page <= 1}
 								onClick={() => goToPage(page - 1)}
 							>
@@ -135,6 +136,7 @@ function CasesPage() {
 							<Button
 								variant="outline"
 								size="xs"
+								className="h-9 px-3 sm:h-6"
 								disabled={page >= pages}
 								onClick={() => goToPage(page + 1)}
 							>

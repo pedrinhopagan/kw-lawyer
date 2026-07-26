@@ -19,10 +19,13 @@ export function createRealtimeChannel<TPayload extends RealtimePayload>() {
 		return event;
 	}
 
+	// O canal é único e serve todo mundo: quem escuta precisa recortar o que é seu antes de mapear, ou
+	// o assinante recebe o progresso do vizinho.
 	async function* live<TSnapshot>(options: {
 		signal?: AbortSignal;
 		getSnapshot: () => Promise<TSnapshot>;
 		select: (event: RealtimeEvent<TPayload>) => TSnapshot;
+		filter?: (event: RealtimeEvent<TPayload>) => boolean;
 	}) {
 		const updates = publisher.subscribe("event", {
 			signal: options.signal,
@@ -33,6 +36,10 @@ export function createRealtimeChannel<TPayload extends RealtimePayload>() {
 			yield await options.getSnapshot();
 
 			for await (const event of updates) {
+				if (options.filter && !options.filter(event)) {
+					continue;
+				}
+
 				yield options.select(event);
 			}
 		} finally {

@@ -10,7 +10,7 @@ import {
 import { DeadlineRow } from "./deadline-row";
 import type { DeadlineItem } from "./queries";
 
-function DayHeading({ dueAt }: { dueAt: string }) {
+function DayHeading({ dueAt, onDay }: { dueAt: string; onDay?: (day: string) => void }) {
 	return (
 		<div className="flex items-baseline gap-3 border-b border-border bg-muted/30 px-4 py-1.5">
 			<span
@@ -25,7 +25,19 @@ function DayHeading({ dueAt }: { dueAt: string }) {
 				{monthLabel(dueAt)}
 			</span>
 			<span className="text-2xs text-muted-foreground">{weekdayLabel(dueAt)}</span>
-			<span className="ml-auto text-2xs text-muted-foreground">{countdownLabel(dueAt)}</span>
+			{!onDay && (
+				<span className="ml-auto text-2xs text-muted-foreground">{countdownLabel(dueAt)}</span>
+			)}
+
+			{!!onDay && (
+				<button
+					type="button"
+					className="ml-auto cursor-pointer text-2xs text-muted-foreground underline-offset-2 transition-colors hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
+					onClick={() => onDay(dueAt)}
+				>
+					{countdownLabel(dueAt)}, ver o dia
+				</button>
+			)}
 		</div>
 	);
 }
@@ -33,15 +45,17 @@ function DayHeading({ dueAt }: { dueAt: string }) {
 export function AgendaList({
 	items,
 	onOpen,
+	onDay,
 }: {
 	items: DeadlineItem[];
 	onOpen: (item: DeadlineItem) => void;
+	onDay?: (day: string) => void;
 }) {
 	return (
 		<>
 			{groupByDueDate(items).map((group) => (
 				<section key={group.dueAt}>
-					<DayHeading dueAt={group.dueAt} />
+					<DayHeading dueAt={group.dueAt} onDay={onDay} />
 
 					<ul className="divide-y divide-border border-b border-border">
 						{group.items.map((item) => (

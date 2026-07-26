@@ -46,7 +46,7 @@ async function seedAxisScenario(tx: Tx, oabNumber: string) {
 		caseId: federal,
 		title: "Petição avulsa",
 		dueAt: "2026-08-05",
-		status: "confirmado",
+		status: "pendente",
 		audience: "partes",
 		confidence: "media",
 		origin: "manual",
@@ -81,7 +81,7 @@ test(
 			lawyerId: lawyer.id,
 			title: "Embargos futuros",
 			dueAt: "2026-09-01",
-			status: "confirmado",
+			status: "pendente",
 			audience: "partes",
 		});
 		await seedDeadline(tx, {
@@ -201,7 +201,7 @@ test(
 );
 
 test(
-	"o resumo conta ação dela, confirmados, cumpridos e descartados sob o mesmo recorte",
+	"o resumo conta ação dela, pendentes, cumpridos e descartados sob o mesmo recorte",
 	withRollback(async (tx) => {
 		const lawyer = await seedLawyer(tx, "94104");
 
@@ -215,7 +215,7 @@ test(
 			lawyerId: lawyer.id,
 			title: "Hoje",
 			dueAt: TODAY,
-			status: "confirmado",
+			status: "pendente",
 			audience: "partes",
 		});
 		await seedDeadline(tx, {
@@ -247,8 +247,7 @@ test(
 			today: 1,
 			next7: 1,
 			actionable: 2,
-			toConfirm: 2,
-			confirmed: 1,
+			pending: 3,
 			done: 1,
 			dismissed: 1,
 		});
@@ -257,11 +256,43 @@ test(
 
 		expect(recortado).toMatchObject({
 			actionable: 2,
-			toConfirm: 1,
-			confirmed: 1,
+			pending: 2,
 			done: 1,
 			dismissed: 1,
 		});
+	}),
+);
+
+test(
+	"a agenda entrega as partes do processo com o polo ativo à frente",
+	withRollback(async (tx) => {
+		const lawyer = await seedLawyer(tx, "94107");
+		const caseId = await seedCase(tx, {
+			lawyerId: lawyer.id,
+			cnjNumber: "10204578520238260107",
+			tribunal: "TJSP",
+			parties: [
+				{ name: "JOANA PEREIRA MENDES", polo: "P" },
+				{ name: "MASSA FALIDA DE CERAMICA MODELO LTDA", polo: "A" },
+			],
+		});
+
+		await seedDeadline(tx, {
+			lawyerId: lawyer.id,
+			caseId,
+			title: "Contrarrazões",
+			dueAt: "2026-08-03",
+			audience: "partes",
+		});
+
+		const client = createTestClient(tx, lawyer);
+		const agenda = await client.deadlines.list({});
+
+		expect(agenda.items[0]?.parties).toEqual([
+			{ name: "MASSA FALIDA DE CERAMICA MODELO LTDA", polo: "A" },
+			{ name: "JOANA PEREIRA MENDES", polo: "P" },
+		]);
+		expect(agenda.items[0]?.case?.className).toBe("Procedimento Comum Cível");
 	}),
 );
 
@@ -276,8 +307,7 @@ test(
 		expect(await alice.client.deadlines.list({ actionable: true })).toMatchObject({ total: 2 });
 		expect(await alice.client.deadlines.list({ query: "Laudo" })).toMatchObject({ total: 1 });
 		expect(await alice.client.deadlines.summary({ today: TODAY })).toMatchObject({
-			toConfirm: 2,
-			confirmed: 1,
+			pending: 3,
 			done: 1,
 			dismissed: 0,
 		});

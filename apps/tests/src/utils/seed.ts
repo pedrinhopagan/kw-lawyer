@@ -1,5 +1,7 @@
 import type { Tx } from "@kw-lawyer/api/src/db/client.ts";
+import { caseInstances } from "@kw-lawyer/api/src/db/schema/case_instances.ts";
 import { caseLawyers } from "@kw-lawyer/api/src/db/schema/case_lawyers.ts";
+import { caseParties } from "@kw-lawyer/api/src/db/schema/case_parties.ts";
 import { cases } from "@kw-lawyer/api/src/db/schema/cases.ts";
 import {
 	type DeadlineAudience,
@@ -18,15 +20,38 @@ import {
 } from "@kw-lawyer/api/src/features/djen/normalize.ts";
 import { assertDefined } from "./assertions.ts";
 
-export async function seedLawyer(tx: Tx, oabNumber: string) {
+export const SEED_HISTORY_CUTOFF = "2000-01-01";
+
+let cnjSequence = 0;
+
+// O índice único de `cases.cnj_number` não é isolado por MVCC: dois testes concorrentes que gravam o
+// mesmo número esperam um pelo outro no índice até o rollback e, quando cada lote pega os números em
+// ordem diferente, o Postgres mata um dos dois por deadlock. Cada teste pede os números que só ele
+// vai usar. O sufixo carrega o resto do CNJ (dígitos, ano, segmento, tribunal e origem), que é o que
+// o app lê para decidir ramo da justiça e tribunal.
+export function uniqueCnj(suffix: string) {
+	cnjSequence += 1;
+
+	return `${String(cnjSequence).padStart(7, "0")}${suffix}`;
+}
+
+export async function seedLawyer(tx: Tx, oabNumber: string, historyCutoffAt = SEED_HISTORY_CUTOFF) {
 	const [lawyer] = await tx
 		.insert(lawyers)
-		.values({ name: `ADVOGADO ${oabNumber}`, oabNumber, oabUf: "SP" })
+		.values({
+			name: `ADVOGADO ${oabNumber}`,
+			oabNumber,
+			oabUf: "SP",
+			historyCutoffAt,
+			onboardingState: "pronto",
+		})
 		.returning({
 			id: lawyers.id,
 			name: lawyers.name,
 			oabNumber: lawyers.oabNumber,
 			oabUf: lawyers.oabUf,
+			historyCutoffAt: lawyers.historyCutoffAt,
+			onboardingState: lawyers.onboardingState,
 		});
 
 	assertDefined(lawyer);
@@ -41,7 +66,9 @@ export async function seedCase(
 		cnjNumber: string;
 		tribunal: string;
 		className?: string;
-		grau?: string;
+		orgName?: string;
+		graus?: string[];
+		parties?: { name: string; polo: string }[];
 	},
 ) {
 	const [row] = await tx
@@ -50,15 +77,28 @@ export async function seedCase(
 			cnjNumber: input.cnjNumber,
 			formattedNumber: formatCnj(input.cnjNumber),
 			tribunal: input.tribunal,
-			orgName: "1ª Vara Cível",
+			orgName: input.orgName ?? "1ª Vara Cível",
 			className: input.className ?? "Procedimento Comum Cível",
-			grau: input.grau ?? "G1",
 		})
 		.returning({ id: cases.id });
 
 	assertDefined(row);
 
 	await tx.insert(caseLawyers).values({ caseId: row.id, lawyerId: input.lawyerId });
+
+	await tx.insert(caseInstances).values(
+		(input.graus ?? ["G1"]).map((grau) => ({
+			caseId: row.id,
+			grau,
+			orgJudgingName: "1ª Vara Cível",
+		})),
+	);
+
+	if (input.parties?.length) {
+		await tx
+			.insert(caseParties)
+			.values(input.parties.map((party) => ({ caseId: row.id, ...party })));
+	}
 
 	return row.id;
 }
@@ -72,6 +112,8 @@ export async function seedPublication(
 		availableAt: string;
 		textPlain: string;
 		documentType?: string;
+		orgName?: string;
+		className?: string;
 		tribunal?: string;
 		readAt?: Date;
 	},
@@ -84,7 +126,8 @@ export async function seedPublication(
 			caseId: input.caseId,
 			cnjNumber: input.cnjNumber,
 			tribunal: input.tribunal ?? "TJSP",
-			orgName: "1ª Vara Cível",
+			orgName: input.orgName ?? "1ª Vara Cível",
+			className: input.className,
 			communicationType: "Intimação",
 			documentType: input.documentType ?? "Despacho",
 			availableAt: input.availableAt,
@@ -93,7 +136,6 @@ export async function seedPublication(
 			textHtml: `<p>${input.textPlain}</p>`,
 			textPlain: input.textPlain,
 			excerpt: summarize(extractActBody(input.textPlain)),
-			raw: {},
 		})
 		.returning({ id: publications.id });
 

@@ -4,7 +4,7 @@ import { cases } from "@kw-lawyer/api/src/db/schema/cases.ts";
 import { lawyers } from "@kw-lawyer/api/src/db/schema/lawyers.ts";
 import type { DatajudClient } from "@kw-lawyer/api/src/features/datajud/client.ts";
 import type { DjenClient } from "@kw-lawyer/api/src/features/djen/client.ts";
-import type { DjenItem } from "@kw-lawyer/api/src/features/djen/types.ts";
+import { type DjenItem, djenItemSchema } from "@kw-lawyer/api/src/features/djen/types.ts";
 import { LawyerOabManager } from "@kw-lawyer/api/src/features/oabs/manager.ts";
 import { SyncManager } from "@kw-lawyer/api/src/features/sync/manager.ts";
 import { expect, test } from "bun:test";
@@ -13,7 +13,7 @@ import { assertDefined, expectOrpcError } from "./utils/assertions.ts";
 import { withRollback } from "./utils/db.ts";
 
 type DjenSource = Pick<DjenClient, "fetchAll">;
-type DatajudSource = Pick<DatajudClient, "findCase">;
+type DatajudSource = Pick<DatajudClient, "findCases">;
 
 const OWN_OAB = "930001";
 const PARTNER_OAB = "930002";
@@ -21,11 +21,12 @@ const OWN_CNJ = "10025874520248260100";
 const PARTNER_CNJ = "40117908520258260114";
 
 const DATAJUD_EMPTY: DatajudSource = {
-	findCase: () => Promise.resolve({ status: "sem_registro" as const }),
+	findCases: (params) =>
+		Promise.resolve({ status: "ok" as const, alias: params.tribunal.toLowerCase(), documents: [] }),
 };
 
 function djenItem(input: { id: number; cnjNumber: string }): DjenItem {
-	return {
+	const payload = {
 		id: input.id,
 		data_disponibilizacao: "2026-07-24",
 		texto: "<p>Manifeste-se a parte autora, no prazo de 5 (cinco) dias.</p>",
@@ -34,17 +35,27 @@ function djenItem(input: { id: number; cnjNumber: string }): DjenItem {
 		nomeOrgao: "1ª Vara Cível",
 		numero_processo: input.cnjNumber,
 	};
+
+	return djenItemSchema.assert(payload);
 }
 
 // Cada inscrição devolve o seu próprio processo: é assim que se enxerga se o sync varreu as duas.
 function djenByOab(itemsByOab: Record<string, DjenItem[]>): DjenSource {
 	return {
 		fetchAll: async (params, onPage) => {
-			const items = itemsByOab[params.oabNumber] ?? [];
+			const items = (itemsByOab[params.oabNumber] ?? []).filter(
+				(item) =>
+					item.data_disponibilizacao >= params.window.from &&
+					item.data_disponibilizacao <= params.window.through,
+			);
 
-			await onPage({ page: 1, count: items.length, items, invalid: 0 });
+			if (!items.length) {
+				return { total: 0, invalid: 0, counted: 0 };
+			}
 
-			return { total: items.length, invalid: 0 };
+			await onPage({ page: 1, count: items.length, items, invalid: 0, window: params.window });
+
+			return { total: items.length, invalid: 0, counted: items.length };
 		},
 	};
 }

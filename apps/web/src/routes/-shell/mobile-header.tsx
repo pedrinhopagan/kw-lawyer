@@ -10,7 +10,7 @@ export function MobileHeader({ lawyer }: { lawyer: SessionLawyer }) {
 	const [open, setOpen] = useState(false);
 
 	return (
-		<header className="sticky top-0 z-30 flex h-12 shrink-0 items-center gap-2 border-b border-border bg-background/90 px-2 backdrop-blur-sm md:hidden">
+		<header className="sticky top-0 z-30 flex h-[var(--kw-mobile-header)] shrink-0 items-center gap-2 border-b border-border bg-background/90 px-2 pt-[var(--kw-safe-top)] backdrop-blur-sm md:hidden">
 			<Sheet open={open} onOpenChange={setOpen}>
 				<SheetTrigger asChild>
 					<Button variant="ghost" size="icon-sm" aria-label="Abrir navegação">

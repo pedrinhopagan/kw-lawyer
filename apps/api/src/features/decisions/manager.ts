@@ -2,6 +2,7 @@ import { ORPCError } from "@orpc/server";
 import { and, desc, eq, isNull, notInArray, sql } from "drizzle-orm";
 import type { Db, Tx } from "../../db/client.ts";
 import { caseDecisions } from "../../db/schema/case_decisions.ts";
+import { movements } from "../../db/schema/movements.ts";
 import { publications } from "../../db/schema/publications.ts";
 import { CaseManager } from "../cases/manager.ts";
 import { DeadlineManager } from "../deadlines/manager.ts";
@@ -76,7 +77,7 @@ export class DecisionManager {
 				outcome: classification.outcome,
 				effects: classification.effects,
 				snippet: classification.snippet,
-				confidence: classification.confidence,
+				speciesConfidence: classification.speciesConfidence,
 				engineVersion: DECISION_ENGINE_VERSION,
 			});
 		}
@@ -115,7 +116,7 @@ export class DecisionManager {
 						outcome: sql`excluded.outcome`,
 						effects: sql`excluded.effects`,
 						snippet: sql`excluded.snippet`,
-						confidence: sql`excluded.confidence`,
+						speciesConfidence: sql`excluded.species_confidence`,
 						publicationId: sql`excluded.publication_id`,
 						decidedAt: sql`excluded.decided_at`,
 						engineVersion: sql`excluded.engine_version`,
@@ -152,17 +153,20 @@ export class DecisionManager {
 				outcome: caseDecisions.outcome,
 				effects: caseDecisions.effects,
 				snippet: caseDecisions.snippet,
-				confidence: caseDecisions.confidence,
+				speciesConfidence: caseDecisions.speciesConfidence,
 				origin: caseDecisions.origin,
 				note: caseDecisions.note,
+				grau: movements.grau,
 				publication: {
 					availableAt: publications.availableAt,
 					documentType: publications.documentType,
 					orgName: publications.orgName,
+					className: publications.className,
 					link: publications.link,
 				},
 			})
 			.from(caseDecisions)
+			.innerJoin(movements, eq(movements.id, caseDecisions.movementId))
 			.leftJoin(publications, eq(publications.id, caseDecisions.publicationId))
 			.where(and(eq(caseDecisions.caseId, input.caseId), isNull(caseDecisions.dismissedAt)))
 			.orderBy(desc(caseDecisions.decidedAt));
@@ -203,6 +207,10 @@ export class DecisionManager {
 				outcome: input.outcome,
 				note: input.note,
 				origin: "manual",
+				// A espécie corrigida à mão deixa de ser palpite do classificador, e é ela que escolhe o
+				// recurso: manter a confiança antiga faria o app pedir conferência do que a advogada acabou
+				// de conferir.
+				speciesConfidence: input.species ? "alta" : undefined,
 			})
 			.where(
 				and(

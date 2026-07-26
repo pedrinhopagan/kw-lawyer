@@ -1,7 +1,12 @@
 {
 	"extends": "../../tsconfig.base.json",
 	"compilerOptions": {
-		"types": ["bun-types"]
+		"types": ["bun-types"],
+		// Os testes que cobrem código de apps/web precisam resolver os mesmos aliases que o web usa.
+		"paths": {
+			"@/*": ["../web/src/*"],
+			"@api/*": ["../api/src/*"]
+		}
 	},
 	"include": ["src/**/*"]
 }

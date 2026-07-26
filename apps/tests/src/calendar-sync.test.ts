@@ -12,7 +12,7 @@ import { eq } from "drizzle-orm";
 import { assertDefined, assertIsInstanceOf } from "./utils/assertions.ts";
 import { withRollback } from "./utils/db.ts";
 import { googleStubClients, startGoogleStub } from "./utils/google-stub.ts";
-import { seedCase, seedDeadline, seedLawyer } from "./utils/seed.ts";
+import { SEED_HISTORY_CUTOFF, seedCase, seedDeadline, seedLawyer } from "./utils/seed.ts";
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -72,7 +72,11 @@ test(
 			await seedIntegration(tx, { lawyerId: lawyer.id, expiresAt: new Date(Date.now() + HOUR_MS) });
 
 			const manager = new CalendarManager(tx, oauth, calendar);
-			const primeiro = await manager.sync({ lawyerId: lawyer.id, filters: { actionable: true } });
+			const primeiro = await manager.sync({
+				lawyerId: lawyer.id,
+				historyCutoffAt: SEED_HISTORY_CUTOFF,
+				filters: { actionable: true },
+			});
 
 			expect(primeiro).toEqual({ created: 1, updated: 0, unchanged: 0, removed: 0, pending: 0 });
 			expect(stub.calendarCalls()).toEqual([
@@ -86,7 +90,13 @@ test(
 
 			expect(links).toEqual([{ googleEventId: "evt-1" }]);
 
-			expect(await manager.sync({ lawyerId: lawyer.id, filters: { actionable: true } })).toEqual({
+			expect(
+				await manager.sync({
+					lawyerId: lawyer.id,
+					historyCutoffAt: SEED_HISTORY_CUTOFF,
+					filters: { actionable: true },
+				}),
+			).toEqual({
 				created: 0,
 				updated: 0,
 				unchanged: 1,
@@ -97,7 +107,13 @@ test(
 
 			await tx.update(deadlines).set({ dueAt: "2026-08-10" }).where(eq(deadlines.id, dela));
 
-			expect(await manager.sync({ lawyerId: lawyer.id, filters: { actionable: true } })).toEqual({
+			expect(
+				await manager.sync({
+					lawyerId: lawyer.id,
+					historyCutoffAt: SEED_HISTORY_CUTOFF,
+					filters: { actionable: true },
+				}),
+			).toEqual({
 				created: 0,
 				updated: 1,
 				unchanged: 0,
@@ -111,7 +127,13 @@ test(
 
 			await tx.update(deadlines).set({ status: "cumprido" }).where(eq(deadlines.id, dela));
 
-			expect(await manager.sync({ lawyerId: lawyer.id, filters: { actionable: true } })).toEqual({
+			expect(
+				await manager.sync({
+					lawyerId: lawyer.id,
+					historyCutoffAt: SEED_HISTORY_CUTOFF,
+					filters: { actionable: true },
+				}),
+			).toEqual({
 				created: 0,
 				updated: 0,
 				unchanged: 0,
@@ -144,7 +166,13 @@ test(
 
 			const manager = new CalendarManager(tx, oauth, calendar);
 
-			expect(await manager.sync({ lawyerId: lawyer.id, filters: {} })).toMatchObject({
+			expect(
+				await manager.sync({
+					lawyerId: lawyer.id,
+					historyCutoffAt: SEED_HISTORY_CUTOFF,
+					filters: {},
+				}),
+			).toMatchObject({
 				created: 2,
 			});
 			expect(await manager.status(lawyer.id)).toMatchObject({
@@ -174,6 +202,7 @@ test(
 
 			await new CalendarManager(tx, oauth, calendar).sync({
 				lawyerId: lawyer.id,
+				historyCutoffAt: SEED_HISTORY_CUTOFF,
 				filters: { actionable: true },
 			});
 
@@ -207,14 +236,22 @@ test(
 
 			const manager = new CalendarManager(tx, oauth, calendar);
 
-			await manager.sync({ lawyerId: lawyer.id, filters: { actionable: true } });
+			await manager.sync({
+				lawyerId: lawyer.id,
+				historyCutoffAt: SEED_HISTORY_CUTOFF,
+				filters: { actionable: true },
+			});
 
 			stub.state.goneEventIds.add("evt-1");
 
 			await tx.update(deadlines).set({ dueAt: "2026-08-11" }).where(eq(deadlines.id, dela));
 
 			expect(
-				await manager.sync({ lawyerId: lawyer.id, filters: { actionable: true } }),
+				await manager.sync({
+					lawyerId: lawyer.id,
+					historyCutoffAt: SEED_HISTORY_CUTOFF,
+					filters: { actionable: true },
+				}),
 			).toMatchObject({ updated: 1 });
 
 			const links = await tx
@@ -243,7 +280,11 @@ test(
 			stub.state.tokenError = { status: 400, error: "invalid_grant" };
 
 			const rejection = await new CalendarManager(tx, oauth, calendar)
-				.sync({ lawyerId: lawyer.id, filters: { actionable: true } })
+				.sync({
+					lawyerId: lawyer.id,
+					historyCutoffAt: SEED_HISTORY_CUTOFF,
+					filters: { actionable: true },
+				})
 				.then(
 					() => null,
 					(reason: unknown) => reason,
@@ -276,19 +317,35 @@ test(
 
 			const manager = new CalendarManager(tx, oauth, calendar);
 
-			await manager.sync({ lawyerId: lawyer.id, filters: { actionable: true } });
+			await manager.sync({
+				lawyerId: lawyer.id,
+				historyCutoffAt: SEED_HISTORY_CUTOFF,
+				filters: { actionable: true },
+			});
 			await tx.update(deadlines).set({ status: "cumprido" }).where(eq(deadlines.id, dela));
 
 			const todosOsStatus = { status: [...OPEN_STATUSES, ...CLOSED_STATUSES], actionable: true };
 
-			expect(await manager.sync({ lawyerId: lawyer.id, filters: todosOsStatus })).toEqual({
+			expect(
+				await manager.sync({
+					lawyerId: lawyer.id,
+					historyCutoffAt: SEED_HISTORY_CUTOFF,
+					filters: todosOsStatus,
+				}),
+			).toEqual({
 				created: 0,
 				updated: 0,
 				unchanged: 0,
 				removed: 1,
 				pending: 0,
 			});
-			expect(await manager.sync({ lawyerId: lawyer.id, filters: todosOsStatus })).toEqual({
+			expect(
+				await manager.sync({
+					lawyerId: lawyer.id,
+					historyCutoffAt: SEED_HISTORY_CUTOFF,
+					filters: todosOsStatus,
+				}),
+			).toEqual({
 				created: 0,
 				updated: 0,
 				unchanged: 0,

@@ -99,6 +99,97 @@
       "when": 1785016196778,
       "tag": "0013_icy_eternity",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1785077251763,
+      "tag": "0014_glamorous_cerebro",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1785079845261,
+      "tag": "0015_huge_jubilee",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1785080832603,
+      "tag": "0016_aterrissagem_crua",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1785080841662,
+      "tag": "0017_backfill_djen_communications",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1785080881620,
+      "tag": "0018_drop_publications_raw",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1785084024358,
+      "tag": "0019_glorious_tombstone",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1785084033358,
+      "tag": "0020_backfill_case_instances",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1785084068442,
+      "tag": "0021_numerous_marauders",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1785091112116,
+      "tag": "0022_classe_da_publicacao",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1785091712116,
+      "tag": "0023_confianca_da_especie",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1785096121170,
+      "tag": "0024_petite_callisto",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1785097544927,
+      "tag": "0025_perfis_por_aparelho",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1785098320007,
+      "tag": "0026_uma_sessao_viva_por_perfil",
+      "breakpoints": true
     }
   ]
 }

@@ -14,6 +14,15 @@ export const SPECIES_SHORT = {
 	monocratica: "Monocrática",
 } as const;
 
+// A espécie é o que escolhe o recurso, o prazo e o preparo, e o motor a lê de código de movimento, do
+// texto ou do cabeçalho. Mostrá-la sempre do mesmo jeito seria dar a leitura como fato: o selo diz de
+// onde ela veio.
+export const SPECIES_READING_LABELS = {
+	alta: null,
+	media: "espécie sem confirmação",
+	baixa: "espécie deduzida do texto",
+} as const;
+
 export const OUTCOME_LABELS = {
 	procedente: "Procedente",
 	improcedente: "Improcedente",
@@ -95,7 +104,7 @@ const GRAU_LABELS: Record<string, string> = {
 	SUP: "Instância superior",
 };
 
-export function grauLabel(grau: string | null) {
+export function grauLabel(grau: string | null | undefined) {
 	if (!grau) {
 		return null;
 	}

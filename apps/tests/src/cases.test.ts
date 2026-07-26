@@ -1,4 +1,5 @@
 import type { Tx } from "@kw-lawyer/api/src/db/client.ts";
+import { caseInstances } from "@kw-lawyer/api/src/db/schema/case_instances.ts";
 import { caseLawyers } from "@kw-lawyer/api/src/db/schema/case_lawyers.ts";
 import { caseParties } from "@kw-lawyer/api/src/db/schema/case_parties.ts";
 import { cases } from "@kw-lawyer/api/src/db/schema/cases.ts";
@@ -17,6 +18,8 @@ import { expect, test } from "bun:test";
 import { and, eq } from "drizzle-orm";
 import { assertDefined, expectOrpcError } from "./utils/assertions.ts";
 import { withRollback } from "./utils/db.ts";
+import { testContext } from "./utils/orpc.ts";
+import { SEED_HISTORY_CUTOFF } from "./utils/seed.ts";
 
 function cnjOf(scenario: number, index: number) {
 	return `${`${scenario}${index}`.padStart(7, "0")}8520258260114`;
@@ -25,12 +28,20 @@ function cnjOf(scenario: number, index: number) {
 async function seedLawyer(tx: Tx, scenario: number, slot: number, name: string) {
 	const [lawyer] = await tx
 		.insert(lawyers)
-		.values({ name, oabNumber: `${scenario}0${slot}`, oabUf: "SP" })
+		.values({
+			name,
+			oabNumber: `${scenario}0${slot}`,
+			oabUf: "SP",
+			historyCutoffAt: SEED_HISTORY_CUTOFF,
+			onboardingState: "pronto",
+		})
 		.returning({
 			id: lawyers.id,
 			name: lawyers.name,
 			oabNumber: lawyers.oabNumber,
 			oabUf: lawyers.oabUf,
+			historyCutoffAt: lawyers.historyCutoffAt,
+			onboardingState: lawyers.onboardingState,
 		});
 
 	assertDefined(lawyer);
@@ -104,7 +115,6 @@ async function seedPublication(
 			textHtml: `<p>${input.textPlain}</p>`,
 			textPlain: input.textPlain,
 			excerpt: summarize(extractActBody(input.textPlain)),
-			raw: {},
 		})
 		.returning({ id: publications.id });
 
@@ -133,10 +143,10 @@ test(
 		await seedCase(tx, { lawyerIds: [bruno.id], cnjNumber: cnjOf(scenario, 3) });
 
 		const aliceClient = createRouterClient(casesRouter, {
-			context: { lawyer: alice, access: true, db: tx },
+			context: testContext(tx, alice),
 		});
 		const brunoClient = createRouterClient(casesRouter, {
-			context: { lawyer: bruno, access: true, db: tx },
+			context: testContext(tx, bruno),
 		});
 
 		const aliceList = await aliceClient.list({});
@@ -164,10 +174,10 @@ test(
 		await seedCase(tx, { lawyerIds: [bruno.id], cnjNumber });
 
 		const aliceClient = createRouterClient(casesRouter, {
-			context: { lawyer: alice, access: true, db: tx },
+			context: testContext(tx, alice),
 		});
 		const brunoClient = createRouterClient(casesRouter, {
-			context: { lawyer: bruno, access: true, db: tx },
+			context: testContext(tx, bruno),
 		});
 
 		await expectOrpcError(aliceClient.get({ cnjNumber }), "NOT_FOUND");
@@ -175,6 +185,42 @@ test(
 		const visible = await brunoClient.get({ cnjNumber });
 
 		expect(visible.case.cnjNumber).toBe(cnjNumber);
+	}),
+);
+
+test(
+	"cabeçalho de processo com juizado e vara cível mostra a vara, que é onde o processo corre",
+	withRollback(async (tx) => {
+		const scenario = 9110;
+		const alice = await seedLawyer(tx, scenario, 1, "ALICE");
+		const cnjNumber = cnjOf(scenario, 1);
+		const caseId = await seedCase(tx, { lawyerIds: [alice.id], cnjNumber });
+
+		// O juizado é rito mais simples do primeiro grau, não instância acima da vara: empatar os dois
+		// fazia o cabeçalho mostrar o juizado, com o órgão e a distribuição errados.
+		await tx.insert(caseInstances).values([
+			{
+				caseId,
+				grau: "JE",
+				orgJudgingName: "3º Juizado Especial Cível",
+				filedAt: new Date("2024-02-10T12:00:00Z"),
+			},
+			{
+				caseId,
+				grau: "G1",
+				orgJudgingName: "2ª Vara Cível",
+				filedAt: new Date("2025-08-21T12:00:00Z"),
+			},
+		]);
+
+		const client = createRouterClient(casesRouter, {
+			context: testContext(tx, alice),
+		});
+		const found = await client.get({ cnjNumber });
+
+		expect(found.case.instances.map((instance) => instance.grau).toSorted()).toEqual(["G1", "JE"]);
+		expect(found.case.instance?.grau).toBe("G1");
+		expect(found.case.instance?.orgJudgingName).toBe("2ª Vara Cível");
 	}),
 );
 
@@ -190,10 +236,10 @@ test(
 		await seedCase(tx, { lawyerIds: [bruno.id], cnjNumber: cnjOf(scenario, 2) });
 
 		const aliceClient = createRouterClient(casesRouter, {
-			context: { lawyer: alice, access: true, db: tx },
+			context: testContext(tx, alice),
 		});
 		const brunoClient = createRouterClient(casesRouter, {
-			context: { lawyer: bruno, access: true, db: tx },
+			context: testContext(tx, bruno),
 		});
 
 		const masked = await aliceClient.list({ search: formatCnj(cnjNumber) });
@@ -236,10 +282,10 @@ test(
 		});
 
 		const aliceClient = createRouterClient(casesRouter, {
-			context: { lawyer: alice, access: true, db: tx },
+			context: testContext(tx, alice),
 		});
 		const brunoClient = createRouterClient(casesRouter, {
-			context: { lawyer: bruno, access: true, db: tx },
+			context: testContext(tx, bruno),
 		});
 
 		const found = await aliceClient.list({ search: "joana pereira" });
@@ -277,7 +323,7 @@ test(
 		});
 
 		const client = createRouterClient(casesRouter, {
-			context: { lawyer: alice, access: true, db: tx },
+			context: testContext(tx, alice),
 		});
 
 		const firstPage = await client.list({ limit: 2, offset: 0 });
@@ -347,10 +393,10 @@ test(
 		]);
 
 		const aliceClient = createRouterClient(casesRouter, {
-			context: { lawyer: alice, access: true, db: tx },
+			context: testContext(tx, alice),
 		});
 		const brunoClient = createRouterClient(casesRouter, {
-			context: { lawyer: bruno, access: true, db: tx },
+			context: testContext(tx, bruno),
 		});
 
 		const aliceItem = (await aliceClient.list({})).items[0];
@@ -426,7 +472,7 @@ test(
 			);
 
 		const client = createRouterClient(casesRouter, {
-			context: { lawyer: alice, access: true, db: tx },
+			context: testContext(tx, alice),
 		});
 		const result = await client.get({ cnjNumber: formatCnj(cnjNumber) });
 
@@ -468,7 +514,7 @@ test(
 		expect(second.publication.readAt).toEqual(new Date("2026-05-02T10:00:00Z"));
 
 		const brunoClient = createRouterClient(casesRouter, {
-			context: { lawyer: bruno, access: true, db: tx },
+			context: testContext(tx, bruno),
 		});
 		const fromBruno = await brunoClient.get({ cnjNumber });
 		const brunoSecond = fromBruno.timeline[1];
@@ -511,7 +557,7 @@ test(
 		});
 
 		const client = createRouterClient(casesRouter, {
-			context: { lawyer: alice, access: true, db: tx },
+			context: testContext(tx, alice),
 		});
 		const [item] = (await client.get({ cnjNumber })).timeline;
 
@@ -527,5 +573,39 @@ test(
 		expect(item.publication.excerpt).not.toContain("Jose Carlos Vallone");
 		expect(item.publication.textPlain).toBe(textPlain);
 		expect(item.summary).toBe(item.publication.excerpt);
+	}),
+);
+
+// A leitura parou de derivar o estado da timeline: ele é materializado pela varredura e a tela só lê
+// a coluna. Um processo cuja história não tem nenhum movimento de estado prova a diferença, porque
+// recalcular na leitura devolveria "tramitando".
+test(
+	"a faixa do processo lê o estado gravado na linha, sem reclassificar a timeline",
+	withRollback(async (tx) => {
+		const scenario = 9109;
+		const alice = await seedLawyer(tx, scenario, 1, "ALICE");
+		const cnjNumber = cnjOf(scenario, 1);
+		const stateSince = new Date("2026-03-02T00:00:00Z");
+
+		const caseId = await seedCase(tx, { lawyerIds: [alice.id], cnjNumber });
+
+		await tx.insert(movements).values({
+			caseId,
+			occurredAt: new Date("2026-06-01T00:00:00Z"),
+			type: "Juntada",
+			summary: "Juntada de petição",
+			source: "datajud",
+			externalCode: "85",
+		});
+
+		await tx.update(cases).set({ state: "conclusao", stateSince }).where(eq(cases.id, caseId));
+
+		const client = createRouterClient(casesRouter, { context: testContext(tx, alice) });
+		const result = await client.get({ cnjNumber });
+
+		expect(result.signals.state).toBe("conclusao");
+		expect(result.signals.stateSince).toEqual(stateSince);
+		expect(result.signals.signals).toEqual([]);
+		expect(result.case.state).toBe("conclusao");
 	}),
 );

@@ -11,6 +11,7 @@ import {
 	EFFECT_LABELS,
 	OUTCOME_LABELS,
 	SPECIES_LABELS,
+	SPECIES_READING_LABELS,
 	SPECIES_SHORT,
 } from "@/lib/legal-labels";
 import { DeadlineTicket } from "./deadline-ticket";
@@ -98,6 +99,9 @@ export function AxisDecisions({ cnjNumber }: { cnjNumber: string }) {
 							<span className="text-[0.8125rem] font-semibold">
 								{SPECIES_LABELS[decision.species]}
 							</span>
+							{!!SPECIES_READING_LABELS[decision.speciesConfidence] && (
+								<Chip tone="alert">{SPECIES_READING_LABELS[decision.speciesConfidence]}</Chip>
+							)}
 							{!!decision.outcome && <Chip tone="accent">{OUTCOME_LABELS[decision.outcome]}</Chip>}
 							{decision.effects.map((effect) => (
 								<Chip key={effect}>{EFFECT_LABELS[effect]}</Chip>

@@ -1,21 +1,12 @@
-import { type } from "arktype";
-import { addDays, format } from "date-fns";
 import type { RouterInputs } from "@/lib/orpc";
-import { monthGridRange } from "./agenda-meta";
-import { todayIso } from "@/lib/deadline-meta";
 
-const PAGE_SIZE = 50;
+// Este módulo alimenta o `validateSearch` da rota, que o TanStack Router mantém fora do code
+// splitting: tudo que for importado aqui entra no grafo eager do entry e é avaliado antes do
+// primeiro pixel de qualquer rota, inclusive da landing e do login. Manter sem import de runtime.
 
-const VIEW_PAGE_SIZE = 200;
-const WEEK_WINDOW_DAYS = 7;
-const ISO_DATE = "yyyy-MM-dd";
-const ISO_MONTH = "yyyy-MM";
+const TEXT_MAX = 200;
 
-type DeadlineListInput = RouterInputs["deadlines"]["list"];
-
-type DeadlineSummaryInput = RouterInputs["deadlines"]["summary"];
-
-export type DeadlineFilterInput = Omit<DeadlineListInput, "limit" | "offset">;
+export type DeadlineFilterInput = Omit<RouterInputs["deadlines"]["list"], "limit" | "offset">;
 
 export type DeadlineStatus = NonNullable<DeadlineFilterInput["status"]>[number];
 
@@ -29,16 +20,11 @@ export type AgendaTab = "prazos" | "revisar";
 
 export type AgendaView = "lista" | "calendario" | "situacao";
 
-export type AgendaPreset = "acao" | "todos" | "vencidos" | "hoje" | "semana" | "confirmar";
+export type AgendaPreset = "acao" | "todos" | "vencidos" | "hoje" | "semana";
 
 export type GoogleFeedback = "conectado" | "erro" | "nao_configurado";
 
-export const ALL_STATUSES: DeadlineStatus[] = [
-	"a_confirmar",
-	"confirmado",
-	"cumprido",
-	"descartado",
-];
+export const ALL_STATUSES: DeadlineStatus[] = ["pendente", "cumprido", "descartado"];
 
 export const ALL_AUDIENCES: DeadlineAudience[] = ["partes", "terceiro", "indefinido"];
 
@@ -48,7 +34,7 @@ export const ALL_ORIGINS: DeadlineOrigin[] = ["automatico", "manual"];
 
 export interface AgendaSearch {
 	aba?: "revisar";
-	vista?: Exclude<AgendaView, "lista">;
+	vista?: Exclude<AgendaView, "calendario">;
 	filtro?: Exclude<AgendaPreset, "acao">;
 	status?: DeadlineStatus[];
 	audiencia?: DeadlineAudience[];
@@ -59,90 +45,84 @@ export interface AgendaSearch {
 	q?: string;
 	de?: string;
 	ate?: string;
+	historico?: true;
 	mes?: string;
+	dia?: string;
 	google?: GoogleFeedback;
 }
 
 export type AgendaSearchPatch = Partial<AgendaSearch>;
 
-interface Member<Value> {
-	allows: (data: unknown) => data is Value;
+type Guard<Value> = (raw: unknown) => raw is Value;
+
+// A guarda de `typeof` vem antes do regex de propósito: `RegExp.test` coage o argumento com
+// `String()`, então `?de=x&de=y` (que chega como array) passaria e iria parar no input do oRPC.
+function matching<Value extends string>(pattern: RegExp): Guard<Value> {
+	return (raw): raw is Value => typeof raw === "string" && pattern.test(raw);
 }
 
-const dateValue = type(/^\d{4}-\d{2}-\d{2}$/u);
-const monthValue = type(/^\d{4}-(?:0[1-9]|1[0-2])$/u);
-const textValue = type("string <= 200");
-const tribunalValue = type(/^[A-Z0-9]{2,10}$/u);
-const actValue = type(/^[a-z][a-z_]{1,59}$/u);
-const viewValue = type("'calendario' | 'situacao'");
-const presetValue = type("'todos' | 'vencidos' | 'hoje' | 'semana' | 'confirmar'");
-const statusValue = type("'a_confirmar' | 'confirmado' | 'cumprido' | 'descartado'");
-const audienceValue = type("'partes' | 'terceiro' | 'indefinido'");
-const confidenceValue = type("'alta' | 'media' | 'baixa'");
-const originValue = type("'automatico' | 'manual'");
-const googleValue = type("'conectado' | 'erro' | 'nao_configurado'");
+function oneOf<Value extends string>(values: readonly Value[]): Guard<Value> {
+	return (raw): raw is Value =>
+		typeof raw === "string" && (values as readonly string[]).includes(raw);
+}
 
-function manyOf<Value>(raw: unknown, member: Member<Value>) {
-	const picked = Array.isArray(raw) ? [...new Set(raw.filter((item) => member.allows(item)))] : [];
+const isDate = matching(/^\d{4}-\d{2}-\d{2}$/u);
+const isMonth = matching(/^\d{4}-(?:0[1-9]|1[0-2])$/u);
+const isTribunal = matching(/^[A-Z0-9]{2,10}$/u);
+const isAct = matching(/^[a-z][a-z_]{1,59}$/u);
+const isView = oneOf(["lista", "situacao"] as const);
+const isPreset = oneOf(["todos", "vencidos", "hoje", "semana"] as const);
+const isStatus = oneOf(ALL_STATUSES);
+const isAudience = oneOf(ALL_AUDIENCES);
+const isConfidence = oneOf(ALL_CONFIDENCES);
+const isOrigin = oneOf(ALL_ORIGINS);
+const isGoogle = oneOf(["conectado", "erro", "nao_configurado"] as const);
+
+function manyOf<Value>(raw: unknown, member: Guard<Value>) {
+	const picked = Array.isArray(raw) ? [...new Set(raw.filter((item) => member(item)))] : [];
 
 	return picked.length > 0 ? picked : undefined;
 }
 
 function trimmedOf(raw: unknown) {
-	const text = textValue.allows(raw) ? raw.trim() : "";
+	const text = typeof raw === "string" && raw.length <= TEXT_MAX ? raw.trim() : "";
 
 	return text || undefined;
 }
 
-export const agendaSearchSchema = type({
-	"+": "delete",
-	"aba?": "unknown",
-	"vista?": "unknown",
-	"filtro?": "unknown",
-	"status?": "unknown",
-	"audiencia?": "unknown",
-	"confianca?": "unknown",
-	"origem?": "unknown",
-	"ato?": "unknown",
-	"tribunais?": "unknown",
-	"q?": "unknown",
-	"de?": "unknown",
-	"ate?": "unknown",
-	"mes?": "unknown",
-	"google?": "unknown",
-}).pipe(
-	(raw): AgendaSearch => ({
+// Devolve as 16 chaves explicitamente, inclusive as `undefined`: é isso que descarta chave
+// desconhecida da URL antes que ela vaze para os links gerados por `withSearch`.
+export function agendaSearchSchema(raw: Record<string, unknown>): AgendaSearch {
+	return {
 		aba: raw.aba === "revisar" ? "revisar" : undefined,
-		vista: viewValue.allows(raw.vista) ? raw.vista : undefined,
-		filtro: presetValue.allows(raw.filtro) ? raw.filtro : undefined,
-		status: manyOf(raw.status, statusValue),
-		audiencia: manyOf(raw.audiencia, audienceValue),
-		confianca: manyOf(raw.confianca, confidenceValue),
-		origem: manyOf(raw.origem, originValue),
-		ato: manyOf(raw.ato, actValue),
-		tribunais: manyOf(raw.tribunais, tribunalValue),
+		vista: isView(raw.vista) ? raw.vista : undefined,
+		filtro: isPreset(raw.filtro) ? raw.filtro : undefined,
+		status: manyOf(raw.status, isStatus),
+		audiencia: manyOf(raw.audiencia, isAudience),
+		confianca: manyOf(raw.confianca, isConfidence),
+		origem: manyOf(raw.origem, isOrigin),
+		ato: manyOf(raw.ato, isAct),
+		tribunais: manyOf(raw.tribunais, isTribunal),
 		q: trimmedOf(raw.q),
-		de: dateValue.allows(raw.de) ? raw.de : undefined,
-		ate: dateValue.allows(raw.ate) ? raw.ate : undefined,
-		mes: monthValue.allows(raw.mes) ? raw.mes : undefined,
-		google: googleValue.allows(raw.google) ? raw.google : undefined,
-	}),
-);
+		de: isDate(raw.de) ? raw.de : undefined,
+		ate: isDate(raw.ate) ? raw.ate : undefined,
+		historico: raw.historico === true ? true : undefined,
+		mes: isMonth(raw.mes) ? raw.mes : undefined,
+		dia: isDate(raw.dia) ? raw.dia : undefined,
+		google: isGoogle(raw.google) ? raw.google : undefined,
+	};
+}
 
 export function tabOf(search: AgendaSearch): AgendaTab {
 	return search.aba === "revisar" ? "revisar" : "prazos";
 }
 
 export function viewOf(search: AgendaSearch): AgendaView {
-	return search.vista ?? "lista";
+	return search.vista ?? "calendario";
 }
 
 export function presetOf(search: AgendaSearch): AgendaPreset {
 	return search.filtro ?? "acao";
-}
-
-export function monthOf(search: AgendaSearch) {
-	return search.mes ?? format(new Date(), ISO_MONTH);
 }
 
 export function withSearch(search: AgendaSearch, patch: AgendaSearchPatch): AgendaSearch {
@@ -150,7 +130,13 @@ export function withSearch(search: AgendaSearch, patch: AgendaSearchPatch): Agen
 }
 
 export function withoutFilters(search: AgendaSearch): AgendaSearch {
-	return { aba: search.aba, vista: search.vista, filtro: search.filtro, mes: search.mes };
+	return {
+		aba: search.aba,
+		vista: search.vista,
+		filtro: search.filtro,
+		mes: search.mes,
+		dia: search.dia,
+	};
 }
 
 export function toggled<Value extends string>(list: Value[] | undefined, item: Value) {
@@ -173,109 +159,8 @@ export function activeFilterCount(search: AgendaSearch) {
 		search.q,
 		search.de,
 		search.ate,
+		search.historico,
 	];
 
 	return axes.filter((axis) => (Array.isArray(axis) ? axis.length > 0 : !!axis)).length;
-}
-
-function manualFilters(search: AgendaSearch): DeadlineFilterInput {
-	return {
-		...(!!search.status?.length && { status: search.status }),
-		...(!!search.audiencia?.length && { audience: search.audiencia }),
-		...(!!search.confianca?.length && { confidence: search.confianca }),
-		...(!!search.origem?.length && { origin: search.origem }),
-		...(!!search.ato?.length && { actKeys: search.ato }),
-		...(!!search.tribunais?.length && { tribunals: search.tribunais }),
-		...(!!search.q && { query: search.q }),
-		...(!!search.de && { from: search.de }),
-		...(!!search.ate && { to: search.ate }),
-	};
-}
-
-function presetFilters(preset: AgendaPreset, audienceLocked: boolean): DeadlineFilterInput {
-	const today = todayIso();
-	const mine = audienceLocked ? {} : { actionable: true };
-
-	if (preset === "todos") {
-		return { status: ALL_STATUSES };
-	}
-
-	if (preset === "confirmar") {
-		return { ...mine, status: ["a_confirmar"] };
-	}
-
-	if (preset === "vencidos") {
-		return { ...mine, to: format(addDays(new Date(), -1), ISO_DATE) };
-	}
-
-	if (preset === "hoje") {
-		return { ...mine, from: today, to: today };
-	}
-
-	if (preset === "semana") {
-		return { ...mine, from: today, to: format(addDays(new Date(), WEEK_WINDOW_DAYS), ISO_DATE) };
-	}
-
-	return mine;
-}
-
-function narrowedRange(bounds: { from?: string; to?: string }[]) {
-	const from = bounds
-		.map((bound) => bound.from)
-		.filter((value) => typeof value === "string")
-		.sort()
-		.at(-1);
-	const to = bounds
-		.map((bound) => bound.to)
-		.filter((value) => typeof value === "string")
-		.sort()
-		.at(0);
-
-	return { ...(!!from && { from }), ...(!!to && { to }) };
-}
-
-function mergedFilters(search: AgendaSearch): DeadlineFilterInput {
-	const preset = presetFilters(presetOf(search), !!search.audiencia?.length);
-	const manual = manualFilters(search);
-
-	return { ...preset, ...manual, ...narrowedRange([preset, manual]) };
-}
-
-export function viewFiltersOf(search: AgendaSearch): DeadlineFilterInput {
-	const filters = mergedFilters(search);
-	const view = viewOf(search);
-
-	if (view === "calendario") {
-		return { ...filters, ...narrowedRange([filters, monthGridRange(monthOf(search))]) };
-	}
-
-	if (view === "situacao") {
-		return { ...filters, status: filters.status ?? ALL_STATUSES };
-	}
-
-	return filters;
-}
-
-export function groupStatusesOf(search: AgendaSearch) {
-	return viewFiltersOf(search).status ?? ALL_STATUSES;
-}
-
-function pageSizeOf(search: AgendaSearch) {
-	return viewOf(search) === "lista" ? PAGE_SIZE : VIEW_PAGE_SIZE;
-}
-
-export function listInputOf(search: AgendaSearch, offset: number): DeadlineListInput {
-	return { ...viewFiltersOf(search), limit: pageSizeOf(search), offset };
-}
-
-export function summaryInputOf(search: AgendaSearch): DeadlineSummaryInput {
-	return {
-		...manualFilters(search),
-		...(!search.audiencia?.length && { actionable: true }),
-		today: todayIso(),
-	};
-}
-
-export function groupSummaryInputOf(search: AgendaSearch): DeadlineSummaryInput {
-	return { ...viewFiltersOf(search), today: todayIso() };
 }

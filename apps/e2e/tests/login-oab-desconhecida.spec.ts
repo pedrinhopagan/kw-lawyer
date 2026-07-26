@@ -1,9 +1,8 @@
 import { expect, test } from "../playwright/fixtures.ts";
-import { enterGate, loginWithOab } from "../playwright/ui.ts";
+import { loginWithOab } from "../playwright/ui.ts";
 
 test("OAB sem publicações no DJEN não entra e explica o motivo em pt-br", async ({ page }) => {
 	await page.goto("/login");
-	await enterGate(page);
 
 	await loginWithOab(page, { oabNumber: "999999", oabUf: "SP" });
 

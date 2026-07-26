@@ -18,7 +18,7 @@ export function CaseTabs({
 	tabs: CaseTabDefinition[];
 }) {
 	return (
-		<nav className="sticky top-12 z-20 -mx-4 mt-5 border-b border-border bg-background/95 px-4 backdrop-blur-sm md:top-0">
+		<nav className="sticky top-[var(--kw-mobile-header)] z-20 -mx-4 mt-5 border-b border-border bg-background/95 px-4 backdrop-blur-sm md:top-0">
 			<ul className="scrollbar-none -mb-px flex gap-0.5 overflow-x-auto">
 				{tabs.map((tab) => {
 					const current = tab.key === active;
