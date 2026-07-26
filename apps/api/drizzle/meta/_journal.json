@@ -78,6 +78,27 @@
       "when": 1785002768443,
       "tag": "0010_conscious_tombstone",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1785007356522,
+      "tag": "0011_fantastic_mentor",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1785012626390,
+      "tag": "0012_unknown_swordsman",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1785016196778,
+      "tag": "0013_icy_eternity",
+      "breakpoints": true
     }
   ]
 }

@@ -1,0 +1,1 @@
+ALTER TABLE "lawyers" ADD COLUMN "history_cutoff_at" date DEFAULT current_date NOT NULL;

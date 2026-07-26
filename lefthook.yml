@@ -5,6 +5,7 @@ pre-commit:
       glob: "*.{ts,tsx,js,jsx,mjs,cjs}"
       run: bunx oxlint {staged_files}
     format:
+      glob: "*.{ts,tsx,js,jsx,mjs,cjs}"
       run: bunx oxfmt --check {staged_files}
     db-check:
       run: bun --cwd apps/api db:check
