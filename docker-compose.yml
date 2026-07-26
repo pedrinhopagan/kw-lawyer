@@ -10,3 +10,18 @@ services:
       - "6795:5432"
     volumes:
       - ./.data/postgres:/var/lib/postgresql/data
+
+  # A suíte de ponta a ponta trunca todas as tabelas entre os testes, então ela não pode dividir banco
+  # com o desenvolvimento. Sem este serviço, `bun run test:e2e` falha por conexão recusada numa máquina
+  # que só clonou o repositório.
+  postgres-e2e:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: lawyer_e2e
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5445:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
