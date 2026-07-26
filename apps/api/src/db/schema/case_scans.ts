@@ -1,7 +1,7 @@
 import { integer, jsonb, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 import { cases } from "./cases.ts";
 
-export type CaseScanner = "decisoes" | "provas" | "incidentes";
+export type CaseScanner = "decisoes" | "provas" | "incidentes" | "estado";
 
 export interface CaseScanStats {
 	sources: number;

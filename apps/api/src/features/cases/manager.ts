@@ -11,6 +11,8 @@ import { deadlines } from "../../db/schema/deadlines.ts";
 import { movements } from "../../db/schema/movements.ts";
 import { publicationLinks } from "../../db/schema/publication_links.ts";
 import { publications } from "../../db/schema/publications.ts";
+import { currentInstance, instancesByCase } from "./instances.ts";
+import { signalsOf } from "./signals.ts";
 
 const NUMERIC_SEARCH_PATTERN = /^[\d\s./-]+$/u;
 
@@ -29,6 +31,20 @@ interface CaseGetInput {
 
 export class CaseManager {
 	constructor(private readonly db: Db | Tx) {}
+
+	// A lista de siglas para o filtro precisa ser completa. Derivá-la paginando cases.list trunca no
+	// teto de páginas, e tribunal de processo com movimentação antiga some do filtro: a advogada
+	// fica com um filtro ativo pela URL sem checkbox correspondente para desmarcar.
+	async tribunals(input: { lawyerId: string }) {
+		const rows = await this.db
+			.selectDistinct({ tribunal: cases.tribunal })
+			.from(cases)
+			.innerJoin(caseLawyers, eq(caseLawyers.caseId, cases.id))
+			.where(eq(caseLawyers.lawyerId, input.lawyerId))
+			.orderBy(asc(cases.tribunal));
+
+		return rows.map((row) => row.tribunal);
+	}
 
 	async list(input: CaseListInput) {
 		const search = input.search?.trim();
@@ -123,12 +139,9 @@ export class CaseManager {
 				orgName: cases.orgName,
 				className: cases.className,
 				classCode: cases.classCode,
-				grau: cases.grau,
-				orgJudgingName: cases.orgJudgingName,
 				subjects: cases.subjects,
-				systemName: cases.systemName,
-				filedAt: cases.filedAt,
-				secrecyLevel: cases.secrecyLevel,
+				state: cases.state,
+				stateSince: cases.stateSince,
 				datajudStatus: cases.datajudStatus,
 				datajudSyncedAt: cases.datajudSyncedAt,
 				lastMovementAt: cases.lastMovementAt,
@@ -143,7 +156,9 @@ export class CaseManager {
 			throw new ORPCError("NOT_FOUND", { message: "Processo não encontrado." });
 		}
 
-		return found;
+		const instances = (await instancesByCase(this.db, [found.id])).get(found.id) ?? [];
+
+		return { ...found, instances, instance: currentInstance(instances) };
 	}
 
 	async counters(input: { lawyerId: string; caseId: string }) {
@@ -153,7 +168,7 @@ export class CaseManager {
 				evidence: sql<number>`(select count(*) from ${caseEvidence} where ${caseEvidence.caseId} = ${input.caseId} and ${caseEvidence.dismissedAt} is null)::int`,
 				appealable: sql<number>`(select count(*) from ${caseDecisions} where ${caseDecisions.caseId} = ${input.caseId} and ${caseDecisions.dismissedAt} is null and ${caseDecisions.species} <> 'despacho')::int`,
 				relations: sql<number>`(select count(*) from ${caseRelations} where (${caseRelations.principalCaseId} = ${input.caseId} or ${caseRelations.incidentCaseId} = ${input.caseId}) and ${caseRelations.dismissedAt} is null)::int`,
-				openDeadlines: sql<number>`(select count(*) from ${deadlines} where ${deadlines.caseId} = ${input.caseId} and ${deadlines.lawyerId} = ${input.lawyerId} and ${deadlines.status} in ('a_confirmar', 'confirmado'))::int`,
+				openDeadlines: sql<number>`(select count(*) from ${deadlines} where ${deadlines.caseId} = ${input.caseId} and ${deadlines.lawyerId} = ${input.lawyerId} and ${deadlines.status} = 'pendente')::int`,
 				transited: sql<number>`(select count(*) from ${movements} where ${movements.caseId} = ${input.caseId} and ${movements.externalCode} = '848')::int`,
 			})
 			.from(cases)
@@ -185,6 +200,7 @@ export class CaseManager {
 					occurredAt: movements.occurredAt,
 					type: movements.type,
 					summary: movements.summary,
+					grau: movements.grau,
 					externalCode: movements.externalCode,
 					complements: movements.complements,
 					readAt: publicationLinks.readAt,
@@ -230,12 +246,19 @@ export class CaseManager {
 				occurredAt: row.occurredAt,
 				summary: row.summary,
 				name: row.type,
+				grau: row.grau,
 				code: row.externalCode,
 				complements: row.complements,
 			};
 		});
 
-		return { case: found, counters, parties, timeline };
+		return {
+			case: found,
+			counters,
+			parties,
+			timeline,
+			signals: { state: found.state, stateSince: found.stateSince, ...signalsOf(timelineRows) },
+		};
 	}
 
 	private searchFilter(term: string) {

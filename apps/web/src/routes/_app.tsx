@@ -1,11 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
-import { orpc, orpcClient } from "@/lib/orpc";
 import { accessQueryOptions } from "./-auth/access";
 import { sessionQueryOptions } from "./-auth/session";
+import { AppShellSkeleton } from "./-shell/app-shell-skeleton";
 import { AppSidebar } from "./-shell/app-sidebar";
 import { MobileHeader } from "./-shell/mobile-header";
-import { needsSync, syncStatusQueryOptions } from "./-shell/sync";
 
 export const Route = createFileRoute("/_app")({
 	beforeLoad: async ({ context, location }) => {
@@ -17,23 +16,19 @@ export const Route = createFileRoute("/_app")({
 
 		const { lawyer } = await context.queryClient.ensureQueryData(sessionQueryOptions);
 
-		if (lawyer) {
+		if (!lawyer) {
+			redirect({ to: "/login", search: { redirect: location.href }, throw: true });
+
 			return;
 		}
 
-		redirect({ to: "/login", search: { redirect: location.href }, throw: true });
-	},
-	loader: async ({ context }) => {
-		const status = await context.queryClient.ensureQueryData(syncStatusQueryOptions);
-
-		if (!needsSync(status)) {
-			return;
+		if (lawyer.onboardingState !== "pronto") {
+			redirect({ to: "/comecar", throw: true });
 		}
-
-		await orpcClient.sync.start({ force: false });
-		await context.queryClient.invalidateQueries({ queryKey: orpc.sync.status.key() });
 	},
 	shouldReload: false,
+	pendingComponent: AppShellSkeleton,
+	pendingMs: 150,
 	component: AppLayout,
 });
 
@@ -42,7 +37,7 @@ function AppLayout() {
 	const lawyer = session.data?.lawyer;
 
 	if (!lawyer) {
-		return null;
+		return <AppShellSkeleton />;
 	}
 
 	return (
@@ -53,7 +48,7 @@ function AppLayout() {
 
 			<div className="flex min-w-0 flex-1 flex-col">
 				<MobileHeader lawyer={lawyer} />
-				<main className="min-w-0 flex-1">
+				<main className="min-w-0 flex-1 pb-[var(--kw-safe-bottom)]">
 					<Outlet />
 				</main>
 			</div>

@@ -7,10 +7,11 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useQuery } from "@tanstack/react-query";
+import { useHistoryCutoff } from "@/hooks/use-history-cutoff";
 import { tribunaisQueryOptions } from "@/hooks/use-tribunais";
 import { cn } from "@/lib/cn";
 import { AUDIENCE_CHOICES, CONFIDENCE_CHOICES, ORIGIN_CHOICES, pluralOf } from "./agenda-meta";
-import { STATUS_LABELS } from "@/lib/deadline-meta";
+import { shortDate, STATUS_LABELS } from "@/lib/deadline-meta";
 import {
 	activeFilterCount,
 	ALL_AUDIENCES,
@@ -100,6 +101,30 @@ function TribunalGroup({
 	);
 }
 
+function HistoryToggle({
+	historico,
+	onChange,
+}: {
+	historico: true | undefined;
+	onChange: (patch: AgendaSearchPatch) => void;
+}) {
+	const cutoff = useHistoryCutoff();
+
+	if (!cutoff) {
+		return null;
+	}
+
+	return (
+		<label className={ROW_CLASS}>
+			<Checkbox
+				checked={!!historico}
+				onCheckedChange={() => onChange({ historico: historico ? undefined : true })}
+			/>
+			<span className="leading-snug">Incluir prazos anteriores a {shortDate(cutoff)}</span>
+		</label>
+	);
+}
+
 export function AgendaFilters({
 	search,
 	onChange,
@@ -118,13 +143,15 @@ export function AgendaFilters({
 					variant="outline"
 					size="sm"
 					className={cn(
-						"gap-1.5",
+						"h-10 shrink-0 gap-1.5 px-3 sm:h-8",
 						active > 0 &&
 							"border-primary/45 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary dark:bg-primary/15 dark:hover:bg-primary/20",
 					)}
 				>
 					<SlidersHorizontalIcon className="size-3.5" />
-					Filtros
+					{/* No celular a palavra sai da tela mas fica no nome acessível: `aria-label` no botão
+					    engoliria o contador de filtros ativos que vem logo depois. */}
+					<span className="sr-only sm:not-sr-only">Filtros</span>
 					{active > 0 && <span className="font-mono text-2xs tabular-nums">{active}</span>}
 				</Button>
 			</PopoverTrigger>
@@ -221,6 +248,8 @@ export function AgendaFilters({
 								/>
 							</label>
 						</div>
+
+						<HistoryToggle historico={search.historico} onChange={onChange} />
 					</div>
 				</div>
 

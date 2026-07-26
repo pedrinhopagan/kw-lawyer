@@ -3,22 +3,20 @@ import { getRouteApi } from "@tanstack/react-router";
 import { cn } from "@/lib/cn";
 import { orpc } from "@/lib/orpc";
 import { AgendaCalendar } from "./agenda-calendar";
+import { AgendaDayDialog } from "./agenda-day-dialog";
 import { AgendaList } from "./agenda-list";
 import { AgendaSituacao } from "./agenda-situacao";
 import { AgendaEmpty, AgendaError, AgendaMore, AgendaSkeleton, TriageEmpty } from "./agenda-states";
 import { AgendaToolbar } from "./agenda-toolbar";
 import { AgendaTriage } from "./agenda-triage";
 import { GoogleCalendarBlock, GoogleFeedbackBanner } from "./google-calendar";
+import { listInputOf, monthOf, summaryInputOf, viewFiltersOf } from "./query-input";
 import {
 	activeFilterCount,
 	type AgendaSearch,
 	type AgendaSearchPatch,
-	listInputOf,
-	monthOf,
 	presetOf,
-	summaryInputOf,
 	tabOf,
-	viewFiltersOf,
 	viewOf,
 	withoutFilters,
 	withSearch,
@@ -84,7 +82,7 @@ export function Agenda() {
 
 	return (
 		<div className="mx-auto w-full max-w-5xl pb-16">
-			<header className="sticky top-12 z-20 border-b border-border bg-background/95 backdrop-blur md:top-0">
+			<header className="sticky top-[var(--kw-mobile-header)] z-20 border-b border-border bg-background/95 backdrop-blur md:top-0">
 				<div className="flex items-center gap-2.5 px-4 pt-4 pb-3">
 					<h1 className="text-[1.375rem] leading-none font-semibold tracking-[-0.02em]">Agenda</h1>
 
@@ -136,43 +134,56 @@ export function Agenda() {
 						/>
 					)}
 
-					<div
-						className={cn(
-							"transition-opacity",
-							listFetching && !isFetchingNextPage && "opacity-55",
-						)}
-					>
-						{view === "lista" && (
-							<AgendaList
-								items={items}
-								onOpen={(item) =>
-									navigate({ to: "/prazos/$deadlineId", params: { deadlineId: item.id } })
-								}
-							/>
-						)}
+					{/* Renderizar a vista junto com o skeleton empilha linhas falsas sobre uma grade de mês
+					    vazia que afirma não haver prazo antes de a resposta chegar. */}
+					{!listPending && !listError && (
+						<div
+							className={cn(
+								"transition-opacity",
+								listFetching && !isFetchingNextPage && "opacity-55",
+							)}
+						>
+							{view === "lista" && (
+								<AgendaList
+									items={items}
+									onOpen={(item) =>
+										navigate({ to: "/prazos/$deadlineId", params: { deadlineId: item.id } })
+									}
+								/>
+							)}
 
-						{view === "calendario" && (
-							<AgendaCalendar
-								items={items}
-								month={monthOf(search)}
-								onMonth={(mes) => patchSearch({ mes })}
-								onDay={(day) => patchSearch({ vista: undefined, de: day, ate: day })}
-								onOpen={(item) =>
-									navigate({ to: "/prazos/$deadlineId", params: { deadlineId: item.id } })
-								}
-							/>
-						)}
+							{view === "calendario" && (
+								<AgendaCalendar
+									items={items}
+									month={monthOf(search)}
+									onMonth={(mes) => patchSearch({ mes, dia: undefined })}
+									onDay={(dia) => patchSearch({ dia })}
+									onOpen={(item) =>
+										navigate({ to: "/prazos/$deadlineId", params: { deadlineId: item.id } })
+									}
+								/>
+							)}
 
-						{view === "situacao" && (
-							<AgendaSituacao
-								search={search}
-								items={items}
-								onOpen={(item) =>
-									navigate({ to: "/prazos/$deadlineId", params: { deadlineId: item.id } })
-								}
-							/>
-						)}
-					</div>
+							{view === "situacao" && (
+								<AgendaSituacao
+									search={search}
+									items={items}
+									onOpen={(item) =>
+										navigate({ to: "/prazos/$deadlineId", params: { deadlineId: item.id } })
+									}
+								/>
+							)}
+						</div>
+					)}
+
+					<AgendaDayDialog
+						day={search.dia}
+						items={items.filter((item) => item.dueAt === search.dia)}
+						onClose={() => patchSearch({ dia: undefined })}
+						onOpen={(item) =>
+							navigate({ to: "/prazos/$deadlineId", params: { deadlineId: item.id } })
+						}
+					/>
 
 					{hasNextPage && (
 						<AgendaMore

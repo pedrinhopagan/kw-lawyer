@@ -1,4 +1,4 @@
-import { CaseAnalysisManager } from "../features/analysis/manager.ts";
+import { CaseAnalysisManager, STATE_ENGINE_VERSION } from "../features/analysis/manager.ts";
 import { DECISION_ENGINE_VERSION } from "../features/decisions/manager.ts";
 import { EVIDENCE_ENGINE_VERSION } from "../features/evidence/manager.ts";
 import { INCIDENT_ENGINE_VERSION } from "../features/incidents/manager.ts";
@@ -8,6 +8,7 @@ const ENGINE_VERSIONS: Record<string, number> = {
 	decisoes: DECISION_ENGINE_VERSION,
 	provas: EVIDENCE_ENGINE_VERSION,
 	incidentes: INCIDENT_ENGINE_VERSION,
+	estado: STATE_ENGINE_VERSION,
 };
 
 const force = process.argv.includes("--force");

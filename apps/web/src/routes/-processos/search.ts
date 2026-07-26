@@ -1,4 +1,5 @@
-import { type } from "arktype";
+// Alimenta o `validateSearch` das rotas de processo, que fica fora do code splitting do TanStack
+// Router: import de runtime aqui entra no grafo eager do entry. Por isso é TypeScript puro.
 
 export const CASES_PAGE_SIZE = 25;
 export const SEARCH_DEBOUNCE_MS = 320;
@@ -28,15 +29,25 @@ export interface CaseSearch {
 	aba?: CaseTab;
 }
 
-const casesSearchSchema = type({
-	"+": "delete",
-	"q?": "string",
-	"tribunal?": "string",
-	"page?": "number",
-}).pipe((raw): CasesSearch => {
+// Campo declarado com tipo errado derruba o parse inteiro e devolve `{}`, que é o que o schema
+// arktype anterior fazia. Preservado de propósito: mudar isso muda o que a lista de processos
+// mostra para uma URL malformada, e isso não é decisão de otimização.
+function wrongType(raw: Record<string, unknown>, key: string, expected: "string" | "number") {
+	return key in raw && typeof raw[key] !== expected;
+}
+
+export function parseCasesSearch(raw: Record<string, unknown>): CasesSearch {
+	if (
+		wrongType(raw, "q", "string") ||
+		wrongType(raw, "tribunal", "string") ||
+		wrongType(raw, "page", "number")
+	) {
+		return {};
+	}
+
 	const search: CasesSearch = {};
-	const q = raw.q?.trim();
-	const tribunal = raw.tribunal?.trim().toUpperCase();
+	const q = typeof raw.q === "string" ? raw.q.trim() : undefined;
+	const tribunal = typeof raw.tribunal === "string" ? raw.tribunal.trim().toUpperCase() : undefined;
 
 	if (q) {
 		search.q = q;
@@ -46,53 +57,35 @@ const casesSearchSchema = type({
 		search.tribunal = tribunal;
 	}
 
-	if (raw.page && raw.page > 1) {
+	if (typeof raw.page === "number" && raw.page > 1) {
 		search.page = Math.floor(raw.page);
 	}
 
 	return search;
-});
-
-const caseSearchSchema = type({ "+": "delete", "pub?": "string", "aba?": "string" }).pipe(
-	(raw): CaseSearch => {
-		const search: CaseSearch = {};
-
-		if (raw.pub && UUID_PATTERN.test(raw.pub)) {
-			search.pub = raw.pub;
-		}
-
-		const tab = CASE_TABS.find((entry) => entry === raw.aba);
-
-		if (tab && tab !== "visao-geral") {
-			search.aba = tab;
-		}
-
-		if (search.pub && !search.aba) {
-			search.aba = "andamentos";
-		}
-
-		return search;
-	},
-);
-
-export function parseCasesSearch(search: Record<string, unknown>): CasesSearch {
-	const parsed = casesSearchSchema(search);
-
-	if (parsed instanceof type.errors) {
-		return {};
-	}
-
-	return parsed;
 }
 
-export function parseCaseSearch(search: Record<string, unknown>): CaseSearch {
-	const parsed = caseSearchSchema(search);
-
-	if (parsed instanceof type.errors) {
+export function parseCaseSearch(raw: Record<string, unknown>): CaseSearch {
+	if (wrongType(raw, "pub", "string") || wrongType(raw, "aba", "string")) {
 		return {};
 	}
 
-	return parsed;
+	const search: CaseSearch = {};
+
+	if (typeof raw.pub === "string" && UUID_PATTERN.test(raw.pub)) {
+		search.pub = raw.pub;
+	}
+
+	const tab = CASE_TABS.find((entry) => entry === raw.aba);
+
+	if (tab && tab !== "visao-geral") {
+		search.aba = tab;
+	}
+
+	if (search.pub && !search.aba) {
+		search.aba = "andamentos";
+	}
+
+	return search;
 }
 
 export function publicationIdFromHash(hash: string) {

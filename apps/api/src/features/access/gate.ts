@@ -5,7 +5,10 @@ import { accessGateConfigured, env } from "../../env.ts";
 import { registerAttempt } from "../auth/attempts.ts";
 
 export const ACCESS_COOKIE_NAME = "kw_access";
-export const ACCESS_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+// Mesma razão do cookie de sessão: o gate é reemitido em toda request, então quem usa o app não
+// reencontra a tela de acesso.
+export const ACCESS_TTL_MS = 365 * 24 * 60 * 60 * 1000;
 
 const ACCESS_ATTEMPT_LIMIT = 8;
 const ACCESS_ATTEMPT_WINDOW_MS = 60_000;

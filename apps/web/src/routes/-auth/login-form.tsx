@@ -50,8 +50,10 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
 	const login = useMutation(
 		orpc.auth.login.mutationOptions({
 			onSuccess: async ({ lawyer }) => {
+				// A tela de entrada também é por onde se acrescenta a segunda OAB, então o cache pode
+				// estar cheio do advogado anterior. Ele sai inteiro antes de a nova sessão assumir.
+				queryClient.clear();
 				queryClient.setQueryData(orpc.auth.me.queryKey(), { lawyer });
-				await queryClient.invalidateQueries({ queryKey: orpc.auth.me.queryKey() });
 				await navigate({ href: redirectTo });
 			},
 			onError: (error) => {

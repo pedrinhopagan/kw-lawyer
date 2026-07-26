@@ -25,6 +25,11 @@ const envSchema = type({
 	"GOOGLE_API_BASE_URL?": "string > 0",
 	"ACCESS_USER?": "string > 0",
 	"ACCESS_PASSWORD?": "string >= 8",
+	"VAPID_PUBLIC_KEY?": "string > 0",
+	"VAPID_PRIVATE_KEY?": "string > 0",
+	"VAPID_SUBJECT?": "string > 0",
+	"WATCH_CLOCK?": "'on' | 'off'",
+	"LOGIN_ATTEMPT_LIMIT?": "string.numeric.parse",
 });
 
 const parsed = envSchema(process.env);
@@ -52,6 +57,14 @@ export const env = {
 	GOOGLE_API_BASE_URL: parsed.GOOGLE_API_BASE_URL ?? GOOGLE_API_DEFAULT_BASE_URL,
 	ACCESS_USER: parsed.ACCESS_USER,
 	ACCESS_PASSWORD: parsed.ACCESS_PASSWORD,
+	VAPID_PUBLIC_KEY: parsed.VAPID_PUBLIC_KEY,
+	VAPID_PRIVATE_KEY: parsed.VAPID_PRIVATE_KEY,
+	VAPID_SUBJECT: parsed.VAPID_SUBJECT ?? parsed.APP_BASE_URL ?? APP_DEFAULT_BASE_URL,
+	WATCH_CLOCK: parsed.WATCH_CLOCK ?? (parsed.NODE_ENV === "production" ? "on" : "off"),
+	// A suíte de ponta a ponta entra dezenas de vezes com a mesma OAB dentro do mesmo minuto e o
+	// contador vive na memória do processo, então ela precisa de um teto próprio. Quem prova que a
+	// regra vale é o teste de integração, que chama o manager direto com o teto real.
+	LOGIN_ATTEMPT_LIMIT: parsed.LOGIN_ATTEMPT_LIMIT ?? 10,
 };
 
 export const googleCalendarConfigured = !!(
@@ -61,6 +74,15 @@ export const googleCalendarConfigured = !!(
 );
 
 export const accessGateConfigured = !!(env.ACCESS_USER && env.ACCESS_PASSWORD);
+
+export const vapid =
+	env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY
+		? {
+				publicKey: env.VAPID_PUBLIC_KEY,
+				privateKey: env.VAPID_PRIVATE_KEY,
+				subject: env.VAPID_SUBJECT,
+			}
+		: null;
 
 if (env.NODE_ENV === "production" && !accessGateConfigured) {
 	console.error(

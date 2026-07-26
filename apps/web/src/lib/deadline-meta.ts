@@ -1,3 +1,4 @@
+import { CANCELED_PUBLICATION_WARNING } from "@api/features/djen/project";
 import { differenceInCalendarDays, format, parseISO } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
@@ -96,10 +97,9 @@ export function actDate(value: string | Date) {
 }
 
 export const STATUS_LABELS = {
-	a_confirmar: "A confirmar",
-	confirmado: "Confirmado",
+	pendente: "Em aberto",
 	cumprido: "Cumprido",
-	descartado: "Descartado",
+	descartado: "Não é meu prazo",
 } as const;
 
 export const CONFIDENCE_LABELS = {
@@ -112,6 +112,20 @@ export const UNIT_LABELS = {
 	uteis: "dias úteis",
 	corridos: "dias corridos",
 } as const;
+
+export function daysLabel(deadline: { days: number; unit: keyof typeof UNIT_LABELS }) {
+	if (deadline.days < 1) {
+		return "manual";
+	}
+
+	return `${deadline.days} ${UNIT_LABELS[deadline.unit]}`;
+}
+
+export const CANCELED_PUBLICATION_LABEL = "publicação cancelada";
+
+export function isCanceledPublicationWarning(warning: string) {
+	return warning === CANCELED_PUBLICATION_WARNING;
+}
 
 export const AUDIENCE_LABELS = {
 	partes: "prazo das partes",

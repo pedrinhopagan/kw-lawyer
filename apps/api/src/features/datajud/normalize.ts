@@ -1,5 +1,9 @@
 const AJUIZAMENTO_LENGTH = 14;
 const BRASILIA_OFFSET_MS = 3 * 60 * 60 * 1000;
+const BRASILIA_OFFSET = "-03:00";
+const TIMEZONE_PATTERN = /(z|[+-]\d{2}:?\d{2})$/iu;
+const SHORT_OFFSET_PATTERN = /[+-]\d{2}$/u;
+const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/u;
 
 export function parseAjuizamento(value: string | null | undefined) {
 	const digits = value?.trim() ?? "";
@@ -30,12 +34,34 @@ export function parseAjuizamento(value: string | null | undefined) {
 	return new Date(brasilia.getTime() + BRASILIA_OFFSET_MS);
 }
 
+function withBrasiliaOffset(text: string) {
+	if (DATE_ONLY_PATTERN.test(text)) {
+		return `${text}T00:00:00${BRASILIA_OFFSET}`;
+	}
+
+	if (TIMEZONE_PATTERN.test(text)) {
+		return text;
+	}
+
+	// "+03" é fuso válido em ISO 8601 e o JavaScript não lê: sem completar os minutos, o carimbo
+	// viraria data inválida e o movimento seria descartado por engano.
+	if (SHORT_OFFSET_PATTERN.test(text)) {
+		return `${text}:00`;
+	}
+
+	return `${text}${BRASILIA_OFFSET}`;
+}
+
+// O DataJud também devolve carimbo sem fuso, e aí o JS leria como hora do servidor: em Brasília o
+// ato andaria até 3h e um movimento da madrugada mudaria de dia, o que muda a contagem do prazo.
 export function parseInstant(value: string | null | undefined) {
-	if (!value?.trim()) {
+	const text = value?.trim().replace(" ", "T");
+
+	if (!text) {
 		return null;
 	}
 
-	const parsed = new Date(value);
+	const parsed = new Date(withBrasiliaOffset(text));
 
 	if (Number.isNaN(parsed.getTime())) {
 		return null;

@@ -1,7 +1,7 @@
 import { formatCnj } from "@kw-lawyer/api/src/features/djen/normalize.ts";
 import { stubCases, stubLawyer, stubMovements, stubPublications } from "../playwright/cnj-stub.ts";
 import { expect, test } from "../playwright/fixtures.ts";
-import { enterGate, loginWithOab } from "../playwright/ui.ts";
+import { loginWithOab } from "../playwright/ui.ts";
 
 const CASO = stubCases.falencia;
 
@@ -10,7 +10,6 @@ test("do inbox o número do processo abre a timeline com o andamento corresponde
 	scenario: _scenario,
 }) => {
 	await page.goto("/login");
-	await enterGate(page);
 	await loginWithOab(page, stubLawyer);
 
 	await expect(

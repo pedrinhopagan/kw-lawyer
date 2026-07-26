@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ArrowUpRightIcon, ExternalLinkIcon, TriangleAlertIcon } from "lucide-react";
+import { ArrowUpRightIcon, BanIcon, ExternalLinkIcon, TriangleAlertIcon } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
 	Sheet,
@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/cn";
 import { formatCnj } from "@/lib/format";
 import { orpc } from "@/lib/orpc";
+import { isCanceledPublication } from "@api/features/djen/project";
 import { fullDate, publicationTitle } from "./publication-meta";
 import type { PublicationItem } from "./queries";
 
@@ -45,6 +46,38 @@ export function PublicationSheet({
 	);
 }
 
+function CanceledNotice({ publication }: { publication: PublicationItem }) {
+	if (!isCanceledPublication(publication)) {
+		return null;
+	}
+
+	return (
+		<div className="mt-1 flex gap-2.5 rounded-[3px] border border-destructive/35 bg-destructive/8 px-3 py-2.5">
+			<BanIcon className="mt-px size-3.5 shrink-0 text-destructive" />
+
+			<div className="flex flex-col gap-1">
+				<p className="text-xs leading-snug font-medium text-destructive">
+					Publicação cancelada pelo tribunal
+					{!!publication.canceledAt && ` em ${fullDate(publication.canceledAt)}`}.
+				</p>
+
+				{!!publication.cancelReason && (
+					<p className="text-xs leading-relaxed text-foreground/80">
+						Motivo do tribunal: {publication.cancelReason}
+					</p>
+				)}
+
+				{!publication.cancelReason && (
+					<p className="text-xs leading-relaxed text-muted-foreground">
+						O tribunal não informou o motivo. O texto abaixo é o que foi publicado antes do
+						cancelamento.
+					</p>
+				)}
+			</div>
+		</div>
+	);
+}
+
 function PublicationReader({ publication }: { publication: PublicationItem }) {
 	const { data, isError, refetch } = useQuery(
 		orpc.publications.get.queryOptions({ input: { id: publication.id } }),
@@ -67,6 +100,8 @@ function PublicationReader({ publication }: { publication: PublicationItem }) {
 						{publication.orgName}
 					</SheetDescription>
 				)}
+
+				<CanceledNotice publication={publication} />
 
 				<div className="flex flex-wrap items-center gap-2 pt-1">
 					{!!publication.cnjNumber && (

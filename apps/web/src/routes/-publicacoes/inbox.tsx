@@ -1,6 +1,8 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { getRouteApi } from "@tanstack/react-router";
+import { CheckCheckIcon } from "lucide-react";
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import { orpc } from "@/lib/orpc";
 import { InboxFilters } from "./inbox-filters";
@@ -8,8 +10,12 @@ import { InboxPagination } from "./inbox-pagination";
 import { InboxEmpty, InboxError, InboxSkeleton, InboxStaleWarning } from "./inbox-states";
 import { PublicationRow } from "./publication-row";
 import { PublicationSheet } from "./publication-sheet";
-import { type PublicationItem, useMarkPublicationRead } from "./queries";
-import { hasFilters, listInputOf, pageOf, withFilters } from "./search";
+import {
+	type PublicationItem,
+	useMarkAllPublicationsRead,
+	useMarkPublicationRead,
+} from "./queries";
+import { filterInputOf, hasFilters, listInputOf, pageOf, withFilters } from "./search";
 
 const route = getRouteApi("/_app/publicacoes");
 
@@ -27,6 +33,7 @@ export function Inbox() {
 	const [reading, setReading] = useState<PublicationItem | null>(null);
 	const [readerOpen, setReaderOpen] = useState(false);
 	const { mutate: markRead } = useMarkPublicationRead();
+	const { mutate: markAllRead, isPending: markingAll } = useMarkAllPublicationsRead();
 
 	const { data, isPending, isError, isFetching, refetch } = useQuery(
 		orpc.publications.list.queryOptions({
@@ -48,7 +55,7 @@ export function Inbox() {
 
 	return (
 		<div className="mx-auto w-full max-w-5xl pb-16">
-			<header className="sticky top-12 z-20 border-b border-border bg-background/95 backdrop-blur md:top-0">
+			<header className="sticky top-[var(--kw-mobile-header)] z-20 border-b border-border bg-background/95 backdrop-blur md:top-0">
 				<div className="flex items-center gap-2.5 px-4 pt-4 pb-3">
 					<h1 className="text-[1.375rem] leading-none font-semibold tracking-[-0.02em]">
 						Publicações
@@ -60,11 +67,27 @@ export function Inbox() {
 						</span>
 					)}
 
-					{!!data && (
-						<span className="ml-auto text-2xs text-muted-foreground tabular-nums">
-							{countLabel(data.total, hasFilters(search))}
-						</span>
-					)}
+					<div className="ml-auto flex items-center gap-2">
+						{!!data && (
+							<span className="text-2xs text-muted-foreground tabular-nums">
+								{countLabel(data.total, hasFilters(search))}
+							</span>
+						)}
+
+						{!!data?.unread && (
+							<Button
+								variant="outline"
+								size="sm"
+								disabled={markingAll}
+								className="gap-1.5"
+								onClick={() => markAllRead(filterInputOf(search))}
+							>
+								<CheckCheckIcon className="size-3.5" />
+								<span className="hidden sm:inline">Marcar todas como lidas</span>
+								<span className="sm:hidden">Marcar lidas</span>
+							</Button>
+						)}
+					</div>
 				</div>
 
 				<div className="px-4 pb-3">
@@ -83,7 +106,11 @@ export function Inbox() {
 			{isError && !!data && <InboxStaleWarning onRetry={() => refetch()} />}
 
 			{!!data && data.items.length === 0 && (
-				<InboxEmpty filtered={hasFilters(search)} onClear={() => navigate({ search: {} })} />
+				<InboxEmpty
+					filtered={hasFilters(search)}
+					onClear={() => navigate({ search: {} })}
+					onHistory={() => navigate({ search: { historico: true } })}
+				/>
 			)}
 
 			{!!data && data.items.length > 0 && (

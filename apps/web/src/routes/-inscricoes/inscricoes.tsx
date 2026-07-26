@@ -22,7 +22,7 @@ export function Inscricoes() {
 
 	return (
 		<div className="mx-auto w-full max-w-3xl pb-16">
-			<header className="sticky top-12 z-20 border-b border-border bg-background/95 px-4 pt-4 pb-3 backdrop-blur md:top-0">
+			<header className="sticky top-[var(--kw-mobile-header)] z-20 border-b border-border bg-background/95 px-4 pt-4 pb-3 backdrop-blur md:top-0">
 				<h1 className="text-[1.375rem] leading-none font-semibold tracking-[-0.02em]">
 					Inscrições
 				</h1>

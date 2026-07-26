@@ -29,3 +29,12 @@ createRoot(rootElement).render(
 		<RouterProvider router={router} />
 	</StrictMode>,
 );
+
+// Registro fora do React de propósito: o service worker é do documento, não de um componente, e o
+// Web Push depende dele estar pronto antes de qualquer tela pedir permissão. Em dev fica fora para
+// não competir com o HMR.
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+	await navigator.serviceWorker.register("/sw.js").catch((error: unknown) => {
+		console.error("[pwa] service worker não registrou", error);
+	});
+}

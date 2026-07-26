@@ -1,11 +1,13 @@
 import { type QueryClient, queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
-import { isBefore, subMinutes } from "date-fns";
 import { toast } from "sonner";
 import { isClientError, orpc, orpcClient, type RouterOutputs } from "@/lib/orpc";
 
 const STATUS_STALE_MS = 30_000;
-const SYNC_STALE_MINUTES = 30;
-const RUNNING_GRACE_MINUTES = 15;
+
+// O stream reconectava para sempre, e uma reconexão que nunca desiste é indistinguível de progresso
+// parado: depois deste teto a tela assume que perdeu o progresso e diz isso.
+const STREAM_RETRIES = 4;
+const STREAM_RETRY_CAP_MS = 10_000;
 
 export type SyncStatus = RouterOutputs["sync"]["status"];
 
@@ -15,23 +17,6 @@ export type SyncEvent =
 export const syncStatusQueryOptions = orpc.sync.status.queryOptions({
 	staleTime: STATUS_STALE_MS,
 });
-
-export function needsSync({ run, lastSyncedAt }: SyncStatus) {
-	const now = new Date();
-
-	if (
-		run?.status === "em_execucao" &&
-		!isBefore(run.startedAt, subMinutes(now, RUNNING_GRACE_MINUTES))
-	) {
-		return false;
-	}
-
-	if (!lastSyncedAt) {
-		return true;
-	}
-
-	return isBefore(lastSyncedAt, subMinutes(now, SYNC_STALE_MINUTES));
-}
 
 function describeResult(event: SyncEvent) {
 	const parts = [
@@ -55,10 +40,17 @@ async function settleSync(queryClient: QueryClient, event: SyncEvent) {
 		toast.success(describeResult(event));
 	}
 
+	// O sync termina rodando o scan de prazos, então ele cria deadlines. Sem invalidar aqui, a
+	// agenda que a advogada já está olhando fica sem o prazo novo até o staleTime expirar.
+	// O auth entra junto porque o fim do sync move o onboardingState, e é ele que tira a advogada
+	// da tela de /comecar.
 	await Promise.all([
+		queryClient.invalidateQueries({ queryKey: orpc.auth.key() }),
 		queryClient.invalidateQueries({ queryKey: orpc.sync.status.key() }),
 		queryClient.invalidateQueries({ queryKey: orpc.publications.key() }),
 		queryClient.invalidateQueries({ queryKey: orpc.cases.key() }),
+		queryClient.invalidateQueries({ queryKey: orpc.deadlines.key() }),
+		queryClient.invalidateQueries({ queryKey: orpc.hub.key() }),
 	]);
 }
 
@@ -67,21 +59,49 @@ export function syncProgressQueryOptions(queryClient: QueryClient) {
 
 	return queryOptions({
 		queryKey: liveKey,
-		retry: (_failureCount, error: Error) => !isClientError(error),
+		retry: (failureCount, error: Error) => !isClientError(error) && failureCount < STREAM_RETRIES,
+		retryDelay: (failureCount) => Math.min(2 ** failureCount * 1000, STREAM_RETRY_CAP_MS),
 		queryFn: async ({ signal, client, queryKey }) => {
 			const stream = await orpcClient.sync.progress(undefined, { signal });
+
+			// O canal abre com o estado que está no banco, que costuma ser uma sincronização já
+			// terminada: avisar por ele repetiria o toast de conclusão a cada F5. O aviso é da corrida
+			// que esta conexão acompanhou terminar.
+			let running = false;
 
 			for await (const event of stream) {
 				client.setQueryData(queryKey, event);
 
-				if (event.phase === "concluida" || event.phase === "falhou") {
-					await settleSync(queryClient, event);
+				if (event.phase !== "concluida" && event.phase !== "falhou") {
+					running = true;
+					continue;
 				}
+
+				if (!running) {
+					continue;
+				}
+
+				running = false;
+
+				await settleSync(queryClient, event);
 			}
 
 			throw new Error("A conexão com o progresso da sincronização caiu.");
 		},
 	});
+}
+
+// Depois do teto de tentativas a query fica em erro e não volta sozinha. Reabrir o stream traz o
+// snapshot do banco junto, então uma reconexão recupera tudo o que a tela perdeu enquanto esteve fora.
+// A promessa do reset só resolve quando o stream terminar, ou seja, nunca: quem chama não espera.
+export function reconnectSyncProgress(queryClient: QueryClient) {
+	const liveKey = orpc.sync.progress.experimental_liveKey();
+
+	if (queryClient.getQueryState(liveKey)?.status !== "error") {
+		return;
+	}
+
+	void queryClient.resetQueries({ queryKey: liveKey });
 }
 
 export function useStartSync() {
@@ -90,7 +110,12 @@ export function useStartSync() {
 	return useMutation(
 		orpc.sync.start.mutationOptions({
 			onSuccess: async () => {
-				await queryClient.invalidateQueries({ queryKey: orpc.sync.status.key() });
+				await Promise.all([
+					queryClient.invalidateQueries({ queryKey: orpc.auth.key() }),
+					queryClient.invalidateQueries({ queryKey: orpc.sync.status.key() }),
+				]);
+
+				reconnectSyncProgress(queryClient);
 			},
 			onError: () => {
 				toast.error("Não foi possível iniciar a sincronização agora. Tente de novo.");

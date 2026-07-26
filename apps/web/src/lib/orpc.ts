@@ -8,6 +8,7 @@ import type { AppRouter } from "@api/router";
 
 const LOGIN_PATH = "/login";
 const ACCESS_PATH = "/entrar";
+const ONBOARDING_PATH = "/comecar";
 const SERVER_ERROR_STATUS = 500;
 const MAX_RETRIES = 2;
 
@@ -20,18 +21,38 @@ export const orpcClient: RouterClient<AppRouter> = createORPCClient(link);
 
 export const orpc = createTanstackQueryUtils(orpcClient);
 
+function gatePathOf(code: string) {
+	if (code === "ACCESS_REQUIRED") {
+		return ACCESS_PATH;
+	}
+
+	if (code === "UNAUTHORIZED") {
+		return LOGIN_PATH;
+	}
+
+	if (code === "SYNC_REQUIRED") {
+		return ONBOARDING_PATH;
+	}
+
+	return null;
+}
+
 function expireSession(error: unknown) {
 	if (!(error instanceof ORPCError)) {
 		return;
 	}
 
-	if (error.code !== "UNAUTHORIZED" && error.code !== "ACCESS_REQUIRED") {
+	const target = gatePathOf(error.code);
+
+	if (!target || window.location.pathname === target) {
 		return;
 	}
 
-	const target = error.code === "ACCESS_REQUIRED" ? ACCESS_PATH : LOGIN_PATH;
+	// A primeira carga termina no painel inteiro, não na tela de onde a advogada veio: guardar um
+	// redirect aqui só a devolveria para uma rota que ainda não tem dado nenhum.
+	if (target === ONBOARDING_PATH) {
+		window.location.assign(target);
 
-	if (window.location.pathname === target) {
 		return;
 	}
 

@@ -3,7 +3,7 @@ import { db, sql } from "@kw-lawyer/api/src/db/client.ts";
 import { lawyers } from "@kw-lawyer/api/src/db/schema/lawyers.ts";
 import { syncRuns } from "@kw-lawyer/api/src/db/schema/sync_runs.ts";
 import { SyncManager } from "@kw-lawyer/api/src/features/sync/manager.ts";
-import { stubLawyer } from "./cnj-stub.ts";
+import { stubLawyer, stubPartner } from "./cnj-stub.ts";
 
 const [lawyer] = await db.insert(lawyers).values(stubLawyer).returning({ id: lawyers.id });
 
@@ -20,6 +20,10 @@ if (result.status !== "concluida") {
 
 	throw new Error(`[e2e] sincronização do cenário falhou: ${run?.errorMessage}`);
 }
+
+await db
+	.insert(lawyers)
+	.values({ ...stubPartner, onboardingState: "pronto", firstSyncCompletedAt: new Date() });
 
 await sql.end();
 

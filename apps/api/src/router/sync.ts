@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import { db } from "../db/client.ts";
+import { syncDb } from "../db/client.ts";
 import { SyncManager } from "../features/sync/manager.ts";
 import { obs } from "../observability.ts";
 import { authed } from "../orpc.ts";
@@ -15,9 +15,11 @@ export const syncRouter = {
 			return { runId };
 		}
 
+		// O job sai da requisição e vai para o pool próprio: o crawl segura conexão por minutos, e as
+		// dez da leitura são o que a primeira tela tem para responder enquanto ele roda.
 		void obs
 			.context({ type: "job", job_name: "sync.syncLawyer", user_id: lawyerId }, () =>
-				new SyncManager(db).syncLawyer(lawyerId, { runId, force: input.force }),
+				new SyncManager(syncDb).syncLawyer(lawyerId, { runId, force: input.force }),
 			)
 			.catch((error: unknown) => {
 				console.error(`[sync] sincronização ${runId} terminou com erro não tratado`, error);

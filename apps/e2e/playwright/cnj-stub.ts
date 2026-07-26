@@ -22,6 +22,15 @@ export const stubLawyer = {
 	djenAdvogadoId: 4331,
 };
 
+// O sócio existe no banco e nunca no DJEN do stub: é assim que o login o encontra sem chamar o
+// governo, e é dele o painel vazio que prova que um perfil não enxerga o processo do outro.
+export const stubPartner = {
+	name: "RENATO GALVAO DE ARAUJO",
+	oabNumber: "999002",
+	oabUf: "SP",
+	djenAdvogadoId: null,
+};
+
 export const stubCases = {
 	falencia: {
 		cnjNumber: "00144695920128260510",
@@ -119,7 +128,12 @@ function djenPage(url: URL) {
 		return { status: "success", message: "Nenhum registro encontrado", count: 0, items: [] };
 	}
 
-	const items = Object.values(stubPublications).map(djenItem);
+	const from = url.searchParams.get("dataDisponibilizacaoInicio") ?? "";
+	const through = url.searchParams.get("dataDisponibilizacaoFim") ?? "9999-12-31";
+
+	const items = Object.values(stubPublications)
+		.filter((publication) => publication.availableAt >= from && publication.availableAt <= through)
+		.map(djenItem);
 	const pageSize = Number(url.searchParams.get("itensPorPagina") ?? items.length);
 	const page = Number(url.searchParams.get("pagina") ?? 1);
 	const offset = (page - 1) * pageSize;
@@ -140,9 +154,12 @@ function datajudSource(cnjNumber: string) {
 	}
 
 	return {
+		id: `${found.tribunal}-${found.cnjNumber}-G1`,
 		numeroProcesso: found.cnjNumber,
 		tribunal: found.tribunal,
 		grau: "G1",
+		dataHoraUltimaAtualizacao: daysAgo(1).toISOString(),
+		formato: { codigo: 1, nome: "Eletrônico" },
 		dataAjuizamento: "20120814143200",
 		nivelSigilo: 0,
 		classe: { codigo: 159, nome: found.className },
@@ -158,29 +175,85 @@ function datajudSource(cnjNumber: string) {
 	};
 }
 
+// O stub responde ao lote e só ao lote: uma volta à consulta por processo tem que quebrar a suíte
+// aqui, e não passar despercebida como e2e verde.
 async function datajudHits(request: Request) {
-	const body = (await request.json()) as { query?: { match?: { numeroProcesso?: string } } };
-	const source = datajudSource(body.query?.match?.numeroProcesso ?? "");
+	const body = (await request.json()) as { query?: { terms?: { numeroProcesso?: string[] } } };
+	const cnjNumbers = body.query?.terms?.numeroProcesso;
 
-	if (!source) {
-		return { hits: { hits: [] } };
+	if (!Array.isArray(cnjNumbers)) {
+		return null;
 	}
 
-	return { hits: { hits: [{ _source: source }] } };
+	const hits = cnjNumbers
+		.map((cnjNumber) => datajudSource(cnjNumber))
+		.filter((source) => source !== null)
+		.map((source) => ({ _id: source.id, _source: source }));
+
+	return { hits: { total: { value: hits.length, relation: "eq" }, hits } };
+}
+
+const DJEN_LATENCY_PATH = "/controle/atraso-djen";
+
+// O stub sobrevive à suíte (`reuseExistingServer`), então um teste morto no meio deixaria o atraso
+// ligado para todo mundo que rodasse depois. O atraso vale por uma janela curta e se desfaz sozinho.
+const DJEN_LATENCY_TTL_MS = 30_000;
+
+// O DJEN de verdade leva segundos por janela, e a carga inicial varre dezenas delas: é nesse tempo
+// que a advogada olha a barra de progresso. Contra um stub instantâneo a tela de sincronização
+// aparece e some antes de qualquer asserção, e o teste que a conferisse só piscaria.
+export async function comAtrasoNoDjen(latencyMs: number, run: () => Promise<void>) {
+	await fetch(`${CNJ_STUB_URL}${DJEN_LATENCY_PATH}`, {
+		method: "POST",
+		body: JSON.stringify({ latencyMs }),
+	});
+
+	try {
+		await run();
+	} finally {
+		await fetch(`${CNJ_STUB_URL}${DJEN_LATENCY_PATH}`, {
+			method: "POST",
+			body: JSON.stringify({ latencyMs: 0 }),
+		});
+	}
 }
 
 if (import.meta.main) {
+	let djenLatencyMs = 0;
+	let djenLatencyUntil = 0;
+
 	const server = Bun.serve({
 		port: CNJ_STUB_PORT,
 		async fetch(request) {
 			const url = new URL(request.url);
 
+			if (url.pathname === DJEN_LATENCY_PATH) {
+				const body = (await request.json()) as { latencyMs?: number };
+
+				djenLatencyMs = body.latencyMs ?? 0;
+				djenLatencyUntil = Date.now() + DJEN_LATENCY_TTL_MS;
+
+				return Response.json({ latencyMs: djenLatencyMs });
+			}
+
 			if (url.pathname === "/djen/comunicacao") {
+				if (djenLatencyMs && Date.now() < djenLatencyUntil) {
+					await Bun.sleep(djenLatencyMs);
+				}
+
 				return Response.json(djenPage(url));
 			}
 
 			if (url.pathname.startsWith("/datajud/api_publica_")) {
-				return Response.json(await datajudHits(request));
+				const hits = await datajudHits(request);
+
+				if (!hits) {
+					return new Response("stub do DataJud só responde consulta em lote (terms)", {
+						status: 400,
+					});
+				}
+
+				return Response.json(hits);
 			}
 
 			return new Response("stub do CNJ não conhece esta rota", { status: 404 });

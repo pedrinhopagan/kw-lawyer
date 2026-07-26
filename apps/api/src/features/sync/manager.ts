@@ -1,53 +1,59 @@
 import { ORPCError } from "@orpc/server";
-import { and, desc, eq, gt, isNull, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, ne, notInArray, sql } from "drizzle-orm";
 import type { Db, Tx } from "../../db/client.ts";
+import { caseInstances } from "../../db/schema/case_instances.ts";
 import { caseLawyers } from "../../db/schema/case_lawyers.ts";
-import { caseParties } from "../../db/schema/case_parties.ts";
-import { cases } from "../../db/schema/cases.ts";
+import { type CaseDatajudStatus, cases } from "../../db/schema/cases.ts";
+import { datajudDocuments } from "../../db/schema/datajud_documents.ts";
+import { djenCommunicationOabs } from "../../db/schema/djen_communication_oabs.ts";
+import { djenCommunications } from "../../db/schema/djen_communications.ts";
 import { lawyers } from "../../db/schema/lawyers.ts";
 import { movements } from "../../db/schema/movements.ts";
+import { oabCollections } from "../../db/schema/oab_collections.ts";
 import { publicationLinks } from "../../db/schema/publication_links.ts";
 import { publications } from "../../db/schema/publications.ts";
 import { syncRuns } from "../../db/schema/sync_runs.ts";
 import { CaseAnalysisManager } from "../analysis/manager.ts";
 import { DeadlineManager } from "../deadlines/manager.ts";
-import { DatajudClient } from "../datajud/client.ts";
-import { DjenClient } from "../djen/client.ts";
+import { DATAJUD_BATCH_SIZE, DatajudClient, type DatajudDocument } from "../datajud/client.ts";
+import { forensicToday } from "../deadlines/calendar.ts";
+import { DjenClient, type DjenWindow } from "../djen/client.ts";
+import { lowerGrau } from "../legal/grau.ts";
 import { LawyerOabManager } from "../oabs/manager.ts";
-import {
-	contentHash,
-	extractActBody,
-	formatCnj,
-	htmlToPlainText,
-	summarize,
-	toCnjDigits,
-} from "../djen/normalize.ts";
+import { ProjectionManager } from "../projection/manager.ts";
+import { planCollectionWindows } from "./windows.ts";
+import { summarize } from "../djen/normalize.ts";
 import type { DjenItem } from "../djen/types.ts";
-import { emptySyncCounters, type SyncCounters, syncRealtime } from "./realtime.ts";
+import {
+	emptySyncCounters,
+	type SyncCounters,
+	type SyncPhase,
+	syncProgressOf,
+	syncRealtime,
+} from "./realtime.ts";
 
-const ORPHAN_RUN_MS = 15 * 60 * 1000;
-const DATAJUD_FRESHNESS_MS = 6 * 60 * 60 * 1000;
-const DATAJUD_CONCURRENCY = 4;
-const PUBLICATION_SOURCE = "djen";
+// O run é órfão quando o batimento parou, não quando começou faz tempo: carga inicial passa dos
+// quinze minutos com frequência, e derrubá-la por idade era o que colocava dois syncs para rodar
+// em cima da mesma carteira.
+export const ORPHAN_HEARTBEAT_MS = 5 * 60 * 1000;
+
+// O progresso não bate durante as etapas longas: a varredura de prazos e a análise dos processos
+// passam minutos sem nada a relatar, e um sync vivo seria declarado órfão no meio delas. O relógio
+// bate sozinho e morre com o processo, que é o caso que a detecção de órfão existe para pegar.
+const HEARTBEAT_INTERVAL_MS = 60 * 1000;
+
 const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/u;
 
 type DjenSource = Pick<DjenClient, "fetchAll">;
-type DatajudSource = Pick<DatajudClient, "findCase">;
-type DatajudFound = Extract<Awaited<ReturnType<DatajudSource["findCase"]>>, { status: "ok" }>;
-type DatajudMovement = DatajudFound["case"]["movements"][number];
+type DatajudSource = Pick<DatajudClient, "findCases">;
+type DatajudMovement = DatajudDocument["movements"][number];
 
-type EnrichmentTarget = { id: string; cnjNumber: string; tribunal: string };
-
-function runCounters(counters: SyncCounters) {
-	return {
-		fetched: counters.fetched,
-		created: counters.created,
-		duplicated: counters.duplicated,
-		invalid: counters.invalid,
-		casesCreated: counters.casesCreated,
-		casesEnriched: counters.casesEnriched,
-		movementsCreated: counters.movementsCreated,
-	};
+interface EnrichmentTarget {
+	id: string;
+	cnjNumber: string;
+	tribunal: string;
+	sourceUpdatedAt: Date | null;
+	documentIds: string[];
 }
 
 function errorMessage(error: unknown) {
@@ -56,28 +62,6 @@ function errorMessage(error: unknown) {
 	}
 
 	return String(error);
-}
-
-function asText(value: string | number | null | undefined) {
-	if (typeof value === "number") {
-		return String(value);
-	}
-
-	return value;
-}
-
-function publicationExcerpt(textPlain: string, item: DjenItem) {
-	const candidate = [
-		summarize(extractActBody(textPlain)),
-		item.tipoComunicacao,
-		item.tipoDocumento,
-	].find((value) => !!value?.trim());
-
-	if (!candidate) {
-		return "Publicação sem texto";
-	}
-
-	return candidate;
 }
 
 function movementSummary(movement: DatajudMovement) {
@@ -98,7 +82,7 @@ export class SyncManager {
 	) {}
 
 	async start(lawyerId: string) {
-		const orphanBefore = new Date(Date.now() - ORPHAN_RUN_MS);
+		const silentBefore = new Date(Date.now() - ORPHAN_HEARTBEAT_MS);
 
 		return await this.db.transaction(async (tx) => {
 			await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${lawyerId}))`);
@@ -110,7 +94,7 @@ export class SyncManager {
 					and(
 						eq(syncRuns.lawyerId, lawyerId),
 						eq(syncRuns.status, "em_execucao"),
-						gt(syncRuns.startedAt, orphanBefore),
+						gt(syncRuns.heartbeatAt, silentBefore),
 					),
 				)
 				.orderBy(desc(syncRuns.startedAt))
@@ -124,14 +108,30 @@ export class SyncManager {
 				.update(syncRuns)
 				.set({
 					status: "falhou",
+					phase: "falhou",
 					finishedAt: new Date(),
 					errorMessage: "Sincronização interrompida antes de terminar.",
 				})
 				.where(and(eq(syncRuns.lawyerId, lawyerId), eq(syncRuns.status, "em_execucao")));
 
+			const [lawyer] = await tx
+				.select({ firstSyncCompletedAt: lawyers.firstSyncCompletedAt })
+				.from(lawyers)
+				.where(eq(lawyers.id, lawyerId))
+				.limit(1);
+
+			if (!lawyer) {
+				throw new ORPCError("NOT_FOUND", { message: "Advogado não encontrado." });
+			}
+
 			const [run] = await tx
 				.insert(syncRuns)
-				.values({ lawyerId, status: "em_execucao" })
+				.values({
+					lawyerId,
+					status: "em_execucao",
+					phase: "descoberta",
+					kind: lawyer.firstSyncCompletedAt ? "incremental" : "inicial",
+				})
 				.returning({ id: syncRuns.id });
 
 			if (!run) {
@@ -140,8 +140,31 @@ export class SyncManager {
 				});
 			}
 
+			await tx
+				.update(lawyers)
+				.set({ onboardingState: "sincronizando" })
+				.where(and(eq(lawyers.id, lawyerId), ne(lawyers.onboardingState, "pronto")));
+
 			return { runId: run.id, resumed: false };
 		});
+	}
+
+	private beat(runId: string) {
+		const timer = setInterval(() => {
+			this.db
+				.update(syncRuns)
+				.set({ heartbeatAt: new Date() })
+				.where(and(eq(syncRuns.id, runId), eq(syncRuns.status, "em_execucao")))
+				.catch((error: unknown) => {
+					console.error("[sync] falha ao registrar o batimento", error);
+				});
+		}, HEARTBEAT_INTERVAL_MS);
+
+		timer.unref();
+
+		return () => {
+			clearInterval(timer);
+		};
 	}
 
 	async syncLawyer(lawyerId: string, options: { runId: string; force: boolean }) {
@@ -165,18 +188,69 @@ export class SyncManager {
 		}
 
 		const oabs = new LawyerOabManager(this.db);
+		const projection = new ProjectionManager(this.db);
+		const stopBeating = this.beat(options.runId);
 
 		try {
-			for (const source of await oabs.sources(lawyerId)) {
-				await this.discover({ id: lawyer.id, ...source }, options.runId, counters);
+			const sources = await oabs.sources(lawyerId);
+			const discovered = { total: 0 };
+
+			for (const source of sources) {
+				await this.discover({ id: lawyer.id, ...source }, options.runId, counters, discovered);
 				await oabs.markSynced(lawyerId, source);
 			}
 
-			await this.enrich(lawyerId, options.runId, counters, options.force);
-			await new DeadlineManager(this.db).scan({});
-			await new CaseAnalysisManager(this.db).scan({});
+			const pending = await projection.pending(sources);
+
+			await this.report({
+				runId: options.runId,
+				phase: "projecao",
+				counters,
+				total: pending,
+				done: 0,
+			});
+
+			const projected = await projection.run({
+				sources,
+				onProgress: async (done) => {
+					await this.report({
+						runId: options.runId,
+						phase: "projecao",
+						counters,
+						total: pending,
+						done,
+					});
+				},
+			});
+
+			counters.casesCreated += projected.casesCreated;
+			counters.invalid += projected.invalid;
+
+			// O vínculo recém-criado é o que faltava para a segunda advogada ter prazo: a publicação já
+			// está projetada e varrida, então só um scan forçado sobre o que acabou de ganhar vínculo
+			// cria a linha de `deadlines` dela.
+			const linked = await projection.linkWatchers(sources);
+
+			await this.lowerHistoryCutoff(lawyerId);
+
+			// Conclusão, suspensão e baixa definitiva chegam como movimento do DataJud, sem publicação
+			// nenhuma. Classificar só o que veio do DJEN deixaria o processo baixado marcado como em
+			// tramitação para sempre, morando no radar de parados e pesando errado na ordenação.
+			const enriched = await this.enrich(lawyerId, options.runId, counters, options.force);
+
+			const publicationIds = [...new Set([...projected.publicationIds, ...linked.publicationIds])];
+			const caseIds = [...new Set([...projected.caseIds, ...linked.caseIds, ...enriched])];
+
+			await this.classify(options.runId, counters, {
+				publicationIds,
+				caseIds,
+				lawyerId,
+				touched: enriched,
+			});
 		} catch (error) {
 			return await this.finish(lawyerId, options.runId, counters, errorMessage(error));
+		} finally {
+			stopBeating();
 		}
 
 		await this.db.update(lawyers).set({ lastSyncedAt: new Date() }).where(eq(lawyers.id, lawyerId));
@@ -209,14 +283,105 @@ export class SyncManager {
 		return { run, lastSyncedAt: lawyer.lastSyncedAt };
 	}
 
+	// O último run gravado é a resposta completa: quem abre o painel no meio da coleta recebe o estado
+	// atual antes do próximo evento, e é isso que faz o F5 e a segunda réplica contarem a mesma coisa.
+	async progress(lawyerId: string) {
+		const [run] = await this.db
+			.select()
+			.from(syncRuns)
+			.where(eq(syncRuns.lawyerId, lawyerId))
+			.orderBy(desc(syncRuns.startedAt))
+			.limit(1);
+
+		if (!run) {
+			return null;
+		}
+
+		return syncProgressOf(run);
+	}
+
 	async *events(lawyerId: string, signal?: AbortSignal) {
-		for await (const event of syncRealtime.events(signal)) {
-			if (event.lawyerId !== lawyerId) {
+		const live = syncRealtime.live({
+			signal,
+			filter: (event) => event.lawyerId === lawyerId,
+			getSnapshot: () => this.progress(lawyerId),
+			select: (event) => event,
+		});
+
+		for await (const progress of live) {
+			if (!progress) {
 				continue;
 			}
 
-			yield event;
+			yield progress;
 		}
+	}
+
+	private async classify(
+		runId: string,
+		counters: SyncCounters,
+		targets: { publicationIds: string[]; caseIds: string[]; lawyerId: string; touched: string[] },
+	) {
+		const total = targets.publicationIds.length + targets.caseIds.length;
+
+		await this.report({ runId, phase: "classificacao", counters, total, done: 0 });
+
+		if (targets.publicationIds.length) {
+			await new DeadlineManager(this.db).scan({
+				publicationIds: targets.publicationIds,
+				force: true,
+				onProgress: async (done) => {
+					await this.report({ runId, phase: "classificacao", counters, total, done });
+				},
+			});
+		}
+
+		await this.report({
+			runId,
+			phase: "classificacao",
+			counters,
+			total,
+			done: targets.publicationIds.length,
+		});
+
+		// O eixo de estado varre a carteira inteira e não a lista: processo que só o DataJud mexeu, e
+		// processo que nunca foi classificado, não aparecem em lista nenhuma vinda do DJEN.
+		await new CaseAnalysisManager(this.db).scan({
+			caseIds: targets.caseIds,
+			lawyerId: targets.lawyerId,
+			touched: targets.touched,
+		});
+
+		await this.report({ runId, phase: "classificacao", counters, total, done: total });
+	}
+
+	// Grava e transmite o mesmo objeto: o evento é a linha que acabou de ser escrita, nunca uma cópia
+	// montada à parte. O batimento anda junto, então progresso e sinal de vida são a mesma escrita.
+	private async report(input: {
+		runId: string;
+		phase: SyncPhase;
+		counters: SyncCounters;
+		total: number;
+		done: number;
+	}) {
+		const [run] = await this.db
+			.update(syncRuns)
+			.set({
+				...input.counters,
+				phase: input.phase,
+				stepTotal: input.total,
+				stepDone: input.done,
+				heartbeatAt: new Date(),
+			})
+			.where(and(eq(syncRuns.id, input.runId), eq(syncRuns.status, "em_execucao")))
+			.returning();
+
+		// Run substituído por outro não volta a mandar no painel: quem manda é quem está em execução.
+		if (!run) {
+			return;
+		}
+
+		syncRealtime.publish(syncProgressOf(run));
 	}
 
 	private async finish(
@@ -227,375 +392,635 @@ export class SyncManager {
 	) {
 		const status = failure ? ("falhou" as const) : ("concluida" as const);
 
-		await this.db
+		const [run] = await this.db
 			.update(syncRuns)
-			.set({ ...runCounters(counters), status, finishedAt: new Date(), errorMessage: failure })
-			.where(eq(syncRuns.id, runId));
+			.set({
+				...counters,
+				status,
+				phase: status,
+				finishedAt: new Date(),
+				heartbeatAt: new Date(),
+				errorMessage: failure,
+			})
+			.where(and(eq(syncRuns.id, runId), eq(syncRuns.status, "em_execucao")))
+			.returning();
 
-		syncRealtime.publish({
-			...counters,
-			lawyerId,
-			runId,
-			phase: status,
-			errorMessage: failure,
-		});
+		if (!run) {
+			return { runId, status, ...counters };
+		}
+
+		await this.markOnboarding(lawyerId, failure);
+
+		syncRealtime.publish(syncProgressOf(run));
 
 		return { runId, status, ...counters };
 	}
 
+	// "pronto" é terminal: quem já tem o painel montado não volta para o onboarding porque um sync
+	// incremental falhou.
+	private async markOnboarding(lawyerId: string, failure: string | null) {
+		if (failure) {
+			await this.db
+				.update(lawyers)
+				.set({ onboardingState: "falhou" })
+				.where(and(eq(lawyers.id, lawyerId), ne(lawyers.onboardingState, "pronto")));
+
+			return;
+		}
+
+		await this.db
+			.update(lawyers)
+			.set({
+				onboardingState: "pronto",
+				firstSyncCompletedAt: sql`coalesce(${lawyers.firstSyncCompletedAt}, now())`,
+			})
+			.where(eq(lawyers.id, lawyerId));
+	}
+
+	// A descoberta conta em vez de fracionar. O tamanho de cada janela só existe depois de abri-la, e
+	// o histórico inteiro são dezenas delas: prometer fração faria a barra encher e recuar uma vez por
+	// janela, e passar de 100% no dia saturado, cujo tamanho o próprio governo não sabe dizer. O total
+	// verdadeiro entra no fim, quando `fetchAll` devolve o que deu para contar.
 	private async discover(
 		lawyer: { id: string; oabNumber: string; oabUf: string },
 		runId: string,
 		counters: SyncCounters,
+		discovered: { total: number },
 	) {
-		syncRealtime.publish({
-			...counters,
-			lawyerId: lawyer.id,
+		const source = { oabNumber: lawyer.oabNumber, oabUf: lawyer.oabUf };
+		const windows = planCollectionWindows({
+			mark: await this.collectionMark(source),
+			today: forensicToday(),
+		});
+		await this.report({
 			runId,
 			phase: "descoberta",
-			errorMessage: null,
+			counters,
+			total: 0,
+			done: counters.fetched,
 		});
 
-		await this.djen.fetchAll({ oabNumber: lawyer.oabNumber, oabUf: lawyer.oabUf }, async (page) => {
-			counters.fetched += page.items.length + page.invalid;
-			counters.invalid += page.invalid;
+		for (const window of windows) {
+			const totals = await this.djen.fetchAll({ ...source, window }, async (page) => {
+				counters.fetched += page.items.length + page.invalid;
+				counters.invalid += page.invalid;
 
-			await this.db.transaction(async (tx) => {
-				for (const item of page.items) {
-					await this.ingest(tx, lawyer.id, item, counters);
-				}
+				await this.db.transaction(async (tx) => {
+					await this.land(tx, source, runId, page.items, counters);
+				});
+
+				await this.report({
+					runId,
+					phase: "descoberta",
+					counters,
+					total: 0,
+					done: counters.fetched,
+				});
 			});
 
-			await this.db.update(syncRuns).set(runCounters(counters)).where(eq(syncRuns.id, runId));
+			discovered.total += totals.counted;
 
-			syncRealtime.publish({
-				...counters,
-				lawyerId: lawyer.id,
-				runId,
-				phase: "descoberta",
-				errorMessage: null,
-			});
+			await this.markCollected(source, window, runId);
+		}
+
+		await this.report({
+			runId,
+			phase: "descoberta",
+			counters,
+			total: discovered.total,
+			done: counters.fetched,
 		});
 	}
 
-	private async ingest(tx: Tx, lawyerId: string, item: DjenItem, counters: SyncCounters) {
-		const availableAt = item.data_disponibilizacao.slice(0, 10);
+	private async collectionMark(source: { oabNumber: string; oabUf: string }) {
+		const [mark] = await this.db
+			.select({
+				collectedFrom: oabCollections.collectedFrom,
+				collectedThrough: oabCollections.collectedThrough,
+			})
+			.from(oabCollections)
+			.where(
+				and(eq(oabCollections.oabNumber, source.oabNumber), eq(oabCollections.oabUf, source.oabUf)),
+			)
+			.limit(1);
 
-		if (!DATE_ONLY_PATTERN.test(availableAt)) {
-			counters.invalid += 1;
+		return mark;
+	}
 
+	// A marca avança por janela concluída, e não no fim do sync: interrompido no meio, o próximo run
+	// retoma de onde parou em vez de recomeçar o histórico inteiro.
+	private async markCollected(
+		source: { oabNumber: string; oabUf: string },
+		window: DjenWindow,
+		runId: string,
+	) {
+		await this.db
+			.insert(oabCollections)
+			.values({
+				oabNumber: source.oabNumber,
+				oabUf: source.oabUf,
+				collectedFrom: window.from,
+				collectedThrough: window.through,
+				lastRunId: runId,
+			})
+			.onConflictDoUpdate({
+				target: [oabCollections.oabNumber, oabCollections.oabUf],
+				set: {
+					collectedFrom: sql`least(${oabCollections.collectedFrom}, excluded.collected_from)`,
+					collectedThrough: sql`greatest(${oabCollections.collectedThrough}, excluded.collected_through)`,
+					lastRunId: sql`excluded.last_run_id`,
+					updatedAt: new Date(),
+				},
+			});
+	}
+
+	// O corte do histórico é o mais antigo que já foi coletado para ela. Enquanto o sync ainda desce
+	// no tempo, a caixa acompanha o que chegou em vez de esperar o fim para deixar de mostrar 30 dias.
+	private async lowerHistoryCutoff(lawyerId: string) {
+		await this.db
+			.update(lawyers)
+			.set({
+				historyCutoffAt: sql`least(${lawyers.historyCutoffAt}, (
+					select min(${publications.availableAt})
+					from ${publications}
+					inner join ${publicationLinks} on ${publicationLinks.publicationId} = ${publications.id}
+					where ${publicationLinks.lawyerId} = ${lawyerId}
+				))`,
+			})
+			.where(eq(lawyers.id, lawyerId));
+	}
+
+	// A ingestão só aterrissa o cru: normalizar aqui é o que impedia publicação retificada ou
+	// cancelada de entrar e obrigava a rebaixar tudo do governo para corrigir o normalizador.
+	private async land(
+		tx: Tx,
+		source: { oabNumber: string; oabUf: string },
+		runId: string,
+		items: DjenItem[],
+		counters: SyncCounters,
+	) {
+		// O DJEN repete a mesma comunicação dentro de uma página, e o `do update` recusa tocar a mesma
+		// linha duas vezes no mesmo comando: sem colapsar aqui, uma página repetida derruba o sync
+		// inteiro. Vence a última entrega, que é a versão mais recente do item.
+		const landing = new Map<string, { availableAt: string | null; payload: string }>();
+
+		for (const item of items) {
+			const availableAt = item.data_disponibilizacao.slice(0, 10);
+
+			// A data só existe aqui para ordenar a fila de projeção: formato inesperado aterrissa
+			// mesmo assim, e quem recusa a comunicação é a projeção, que sabe dizer o porquê.
+			landing.set(String(item.id), {
+				availableAt: DATE_ONLY_PATTERN.test(availableAt) ? availableAt : null,
+				payload: JSON.stringify(item),
+			});
+		}
+
+		if (!landing.size) {
 			return;
 		}
 
-		const cnjNumber =
-			toCnjDigits(item.numero_processo) ?? toCnjDigits(item.numeroprocessocommascara);
-		const tribunal = item.siglaTribunal?.trim().toUpperCase();
-		const textPlain = htmlToPlainText(item.texto);
-		const excerpt = publicationExcerpt(textPlain, item);
-		const occurredAt = new Date(`${availableAt}T00:00:00.000Z`);
+		const rows = [...landing.entries()].map(([externalId, row]) => ({ externalId, ...row }));
+		const externalIds = rows.map((row) => row.externalId);
 
-		const caseId =
-			cnjNumber && tribunal
-				? await this.upsertCase(tx, { cnjNumber, tribunal, item, occurredAt }, counters)
-				: null;
+		// Hash igual não escreve nada; hash diferente devolve a comunicação para a fila de projeção.
+		const changed = await tx.execute<{ inserted: boolean }>(sql`
+			insert into ${djenCommunications} (
+				id, external_id, available_at, payload, payload_hash, fetched_at, run_id
+			)
+			select gen_random_uuid(), landed.external_id, landed.available_at::date, landed.payload,
+				md5(landed.payload::text), now(), ${runId}::uuid
+			from unnest(
+				${sql.param(externalIds)}::text[],
+				${sql.param(rows.map((row) => row.availableAt))}::text[],
+				${sql.param(rows.map((row) => row.payload))}::jsonb[]
+			) as landed(external_id, available_at, payload)
+			on conflict (external_id) do update set
+				available_at = excluded.available_at,
+				payload = excluded.payload,
+				payload_hash = excluded.payload_hash,
+				fetched_at = excluded.fetched_at,
+				run_id = excluded.run_id,
+				projected_at = null,
+				projector_version = 0
+			where ${djenCommunications.payloadHash} is distinct from excluded.payload_hash
+			returning (xmax = 0) as inserted
+		`);
 
-		if (caseId) {
-			await tx.insert(caseLawyers).values({ caseId, lawyerId }).onConflictDoNothing();
-			await this.upsertParties(tx, caseId, item.destinatarios);
+		const written = [...changed];
+		const created = written.filter((row) => row.inserted).length;
+
+		// Retificada não é duplicada: o hash mudou, a comunicação foi reescrita e volta para a fila.
+		counters.created += created;
+		counters.updated += written.length - created;
+		counters.duplicated += items.length - written.length;
+
+		// O vínculo nasce da inscrição, não de quem coletou: a segunda advogada a acompanhar a mesma
+		// OAB não refaz a coleta e ainda assim precisa herdar o histórico inteiro.
+		await tx.execute(sql`
+			insert into ${djenCommunicationOabs} (id, communication_id, oab_number, oab_uf)
+			select gen_random_uuid(), ${djenCommunications.id}, ${source.oabNumber}, ${source.oabUf}
+			from ${djenCommunications}
+			where ${djenCommunications.externalId} = any(${sql.param(externalIds)}::text[])
+			on conflict (communication_id, oab_number, oab_uf) do nothing
+		`);
+	}
+
+	// O alvo do enriquecimento é o processo cujo conteúdo mudou na fonte, e isso só se sabe depois de
+	// buscar: como o lote traz o documento inteiro, três buscas que não escrevem nada saem muito mais
+	// barato do que trezentas buscas por relógio.
+	private async enrich(lawyerId: string, runId: string, counters: SyncCounters, force: boolean) {
+		const targets = await this.db
+			.select({
+				id: cases.id,
+				cnjNumber: cases.cnjNumber,
+				tribunal: cases.tribunal,
+				sourceUpdatedAt: cases.datajudSourceUpdatedAt,
+				// A marca d'água por carimbo não enxerga documento novo com data antiga, que é como o
+				// tribunal cria a instância recursal: o conjunto de documentos gravados completa a marca.
+				documentIds: sql<string[]>`coalesce((
+					select array_agg(${datajudDocuments.documentId})
+					from ${datajudDocuments}
+					where ${datajudDocuments.caseId} = ${cases.id}
+				), '{}')`,
+			})
+			.from(cases)
+			.innerJoin(caseLawyers, eq(caseLawyers.caseId, cases.id))
+			.where(eq(caseLawyers.lawyerId, lawyerId));
+
+		const byTribunal = new Map<string, EnrichmentTarget[]>();
+
+		for (const target of targets) {
+			const tribunal = byTribunal.get(target.tribunal) ?? [];
+
+			tribunal.push(target);
+			byTribunal.set(target.tribunal, tribunal);
 		}
 
-		const publicationId = await this.upsertPublication(
-			tx,
-			{ item, caseId, cnjNumber, tribunal, availableAt, textPlain, excerpt },
+		const touched: string[] = [];
+		let done = 0;
+
+		await this.report({
+			runId,
+			phase: "enriquecimento",
 			counters,
+			total: targets.length,
+			done,
+		});
+
+		for (const [tribunal, tribunalTargets] of byTribunal) {
+			for (let start = 0; start < tribunalTargets.length; start += DATAJUD_BATCH_SIZE) {
+				const batch = tribunalTargets.slice(start, start + DATAJUD_BATCH_SIZE);
+
+				touched.push(...(await this.enrichBatch(tribunal, batch, counters, force)));
+
+				done += batch.length;
+
+				await this.report({
+					runId,
+					phase: "enriquecimento",
+					counters,
+					total: targets.length,
+					done,
+				});
+			}
+		}
+
+		return touched;
+	}
+
+	private async enrichBatch(
+		tribunal: string,
+		batch: EnrichmentTarget[],
+		counters: SyncCounters,
+		force: boolean,
+	) {
+		const found = await this.datajud
+			.findCases({ tribunal, cnjNumbers: batch.map((target) => target.cnjNumber) })
+			.catch((error: unknown) => {
+				console.error(`[sync] falha ao consultar o lote de processos do ${tribunal}`, error);
+
+				return null;
+			});
+
+		if (!found) {
+			await this.markFailure(batch);
+
+			return [];
+		}
+
+		if (found.status !== "ok") {
+			await this.markStatus(batch, found.status);
+
+			return [];
+		}
+
+		const byCnj = new Map<string, DatajudDocument[]>();
+
+		for (const document of found.documents) {
+			const documents = byCnj.get(document.cnjNumber) ?? [];
+
+			documents.push(document);
+			byCnj.set(document.cnjNumber, documents);
+		}
+
+		// O lote responde por muitos processos, e a gravação de um não pode levar os outros junto: o
+		// processo que falhar fica marcado e a fila do tribunal segue.
+		const unchanged: EnrichmentTarget[] = [];
+		const missing: EnrichmentTarget[] = [];
+		const touched: string[] = [];
+
+		for (const target of batch) {
+			const outcome = await this.enrichCase(
+				target,
+				found.alias,
+				byCnj.get(target.cnjNumber) ?? [],
+				counters,
+				force,
+			).catch(async (error: unknown) => {
+				console.error(`[sync] falha ao enriquecer o processo ${target.cnjNumber}`, error);
+
+				await this.markFailure([target]);
+
+				return "falhou" as const;
+			});
+
+			if (outcome === "inalterado") {
+				unchanged.push(target);
+			}
+
+			if (outcome === "sem_registro") {
+				missing.push(target);
+			}
+
+			if (outcome === "enriquecido") {
+				touched.push(target.id);
+			}
+		}
+
+		// A marcação sai por lote: o caminho sem novidade é o caso comum de quem tem milhares de
+		// processos parados, e uma UPDATE por processo seria uma ida ao banco por processo a cada ciclo.
+		if (unchanged.length) {
+			await this.markStatus(unchanged, "ok");
+		}
+
+		if (missing.length) {
+			await this.markStatus(missing, "sem_registro");
+		}
+
+		return touched;
+	}
+
+	private async enrichCase(
+		target: EnrichmentTarget,
+		alias: string,
+		documents: DatajudDocument[],
+		counters: SyncCounters,
+		force: boolean,
+	) {
+		// A classe e os assuntos do processo vêm da instância de origem, que é a primeira da ordem
+		// estável do lote: eleger o documento por chegada era o que fazia o mesmo processo mudar de
+		// classe entre duas execuções.
+		const [origin] = documents;
+
+		if (!origin) {
+			return "sem_registro" as const;
+		}
+
+		const sourceUpdatedAt = documents.reduce<Date | null>((newest, document) => {
+			if (!document.sourceUpdatedAt || (newest && newest >= document.sourceUpdatedAt)) {
+				return newest;
+			}
+
+			return document.sourceUpdatedAt;
+		}, null);
+
+		const stored = new Set(target.documentIds);
+		const sameDocuments =
+			documents.length === stored.size &&
+			documents.every((document) => stored.has(document.documentId));
+
+		const unchanged =
+			sameDocuments &&
+			!!sourceUpdatedAt &&
+			!!target.sourceUpdatedAt &&
+			sourceUpdatedAt <= target.sourceUpdatedAt;
+
+		// Processo verificado hoje e sem novidade continua verificado hoje: quando a checagem não era
+		// registrada, o processo ficava preso no último erro e sumia do radar de silêncio para sempre.
+		if (unchanged && !force) {
+			return "inalterado" as const;
+		}
+
+		const created = await this.db.transaction(async (tx) => {
+			await tx
+				.update(cases)
+				.set({
+					className: sql`coalesce(${origin.className}, ${cases.className})`,
+					classCode: sql`coalesce(${origin.classCode}, ${cases.classCode})`,
+					subjects: origin.subjects,
+					datajudStatus: "ok",
+					datajudSyncedAt: new Date(),
+					datajudSourceUpdatedAt: sourceUpdatedAt,
+				})
+				.where(eq(cases.id, target.id));
+
+			for (const document of documents) {
+				await this.writeInstance(tx, target.id, alias, document);
+			}
+
+			// Os movimentos são gravados depois dos documentos todos, e não um documento por vez: o mesmo
+			// movimento vem repetido em duas instâncias e é aqui que se decide de qual grau ele é.
+			const movementsCreated = await this.insertDatajudMovements(tx, target.id, documents);
+
+			await this.dropMissing(tx, target.id, documents);
+
+			return movementsCreated;
+		});
+
+		counters.movementsCreated += created;
+		counters.casesEnriched += 1;
+
+		return "enriquecido" as const;
+	}
+
+	// `datajudSyncedAt` responde "quando eu chequei" e só avança quando a fonte respondeu alguma coisa:
+	// a marca do que mudou é `datajudSourceUpdatedAt`, e misturar as duas fazia o processo parado há
+	// meses aparecer como se nunca tivesse sido consultado.
+	private async markStatus(targets: EnrichmentTarget[], status: CaseDatajudStatus) {
+		await this.db
+			.update(cases)
+			.set({ datajudStatus: status, datajudSyncedAt: new Date() })
+			.where(
+				inArray(
+					cases.id,
+					targets.map((target) => target.id),
+				),
+			)
+			.catch((error: unknown) => {
+				console.error(`[sync] não foi possível marcar os processos como ${status}`, error);
+			});
+	}
+
+	// A indisponibilidade é do tribunal, não do processo: rebaixar para "falhou" quem já tem conteúdo
+	// gravado tiraria o lote inteiro do radar de silêncio, e o relógio automático nunca desfaria isso.
+	// Quem nunca foi coberto muda de estado; os outros ficam com a última consulta que deu resposta.
+	private async markFailure(targets: EnrichmentTarget[]) {
+		await this.db
+			.update(cases)
+			.set({
+				datajudStatus: sql`case when ${cases.datajudSourceUpdatedAt} is null then 'falhou' else ${cases.datajudStatus} end`,
+			})
+			.where(
+				inArray(
+					cases.id,
+					targets.map((target) => target.id),
+				),
+			)
+			.catch((error: unknown) => {
+				console.error("[sync] não foi possível registrar a falha de consulta dos processos", error);
+			});
+	}
+
+	// A fonte reindexa, redistribui e corrige documento espúrio. Sem apagar o que sumiu do lote, um
+	// documento de juizado que o tribunal já retirou continuaria ditando o rito recursal para sempre.
+	private async dropMissing(tx: Tx, caseId: string, documents: DatajudDocument[]) {
+		await tx.delete(datajudDocuments).where(
+			and(
+				eq(datajudDocuments.caseId, caseId),
+				notInArray(
+					datajudDocuments.documentId,
+					documents.map((document) => document.documentId),
+				),
+			),
 		);
 
-		await tx.insert(publicationLinks).values({ publicationId, lawyerId }).onConflictDoNothing();
+		const graus = documents.flatMap((document) => document.grau ?? []);
 
-		if (!caseId) {
+		if (!graus.length) {
 			return;
 		}
 
 		await tx
-			.insert(movements)
+			.delete(caseInstances)
+			.where(and(eq(caseInstances.caseId, caseId), notInArray(caseInstances.grau, graus)));
+
+		// O movimento sobrevive à retirada do documento, porque é dele que penduram a decisão e a
+		// correção que a advogada fez. O que não sobrevive é o grau: apagar a instância e deixar o
+		// movimento apontando para ela mantinha o rito do juizado retirado ditando o prazo para sempre.
+		await tx
+			.update(movements)
+			.set({ grau: null })
+			.where(and(eq(movements.caseId, caseId), notInArray(movements.grau, graus)));
+	}
+
+	private async writeInstance(tx: Tx, caseId: string, alias: string, document: DatajudDocument) {
+		const [stored] = await tx
+			.insert(datajudDocuments)
 			.values({
 				caseId,
-				publicationId,
-				occurredAt,
-				type: item.tipoComunicacao,
-				summary: excerpt,
-				source: "publication",
-			})
-			.onConflictDoNothing({ target: movements.publicationId });
-	}
-
-	private async upsertCase(
-		tx: Tx,
-		input: { cnjNumber: string; tribunal: string; item: DjenItem; occurredAt: Date },
-		counters: SyncCounters,
-	) {
-		const [row] = await tx
-			.insert(cases)
-			.values({
-				cnjNumber: input.cnjNumber,
-				formattedNumber: input.item.numeroprocessocommascara?.trim() || formatCnj(input.cnjNumber),
-				tribunal: input.tribunal,
-				orgName: input.item.nomeOrgao,
-				className: input.item.nomeClasse,
-				classCode: asText(input.item.codigoClasse),
-				lastMovementAt: input.occurredAt,
+				tribunalAlias: alias,
+				documentId: document.documentId,
+				source: document.source,
+				sourceUpdatedAt: document.sourceUpdatedAt,
+				fetchedAt: new Date(),
 			})
 			.onConflictDoUpdate({
-				target: cases.cnjNumber,
+				target: [datajudDocuments.tribunalAlias, datajudDocuments.documentId],
 				set: {
-					orgName: sql`coalesce(excluded.org_name, ${cases.orgName})`,
-					className: sql`coalesce(excluded.class_name, ${cases.className})`,
-					classCode: sql`coalesce(excluded.class_code, ${cases.classCode})`,
-					lastMovementAt: sql`greatest(${cases.lastMovementAt}, excluded.last_movement_at)`,
+					caseId: sql`excluded.case_id`,
+					source: sql`excluded.source`,
+					sourceUpdatedAt: sql`excluded.source_updated_at`,
+					fetchedAt: sql`excluded.fetched_at`,
 				},
 			})
-			.returning({ id: cases.id, inserted: sql<boolean>`(xmax = 0)` });
+			.returning({ id: datajudDocuments.id });
 
-		if (!row) {
-			throw new Error(`Não foi possível gravar o processo ${input.cnjNumber}.`);
-		}
-
-		if (row.inserted) {
-			counters.casesCreated += 1;
-		}
-
-		return row.id;
-	}
-
-	private async upsertParties(tx: Tx, caseId: string, destinatarios: DjenItem["destinatarios"]) {
-		const seen = new Set<string>();
-		const values: { caseId: string; name: string; polo: string | null | undefined }[] = [];
-
-		for (const destinatario of destinatarios ?? []) {
-			const name = destinatario.nome.trim();
-
-			if (!name || seen.has(`${name}|${destinatario.polo}`)) {
-				continue;
-			}
-
-			seen.add(`${name}|${destinatario.polo}`);
-			values.push({ caseId, name, polo: destinatario.polo });
-		}
-
-		if (!values.length) {
+		// Sem grau não há instância para chavear: o documento fica gravado inteiro e a instância espera
+		// a fonte dizer de qual grau ele é.
+		if (!document.grau || !stored) {
 			return;
 		}
 
-		await tx.insert(caseParties).values(values).onConflictDoNothing();
-	}
-
-	private async upsertPublication(
-		tx: Tx,
-		input: {
-			item: DjenItem;
-			caseId: string | null;
-			cnjNumber: string | null;
-			tribunal: string | undefined;
-			availableAt: string;
-			textPlain: string;
-			excerpt: string;
-		},
-		counters: SyncCounters,
-	) {
-		const externalId = String(input.item.id);
-
-		const [inserted] = await tx
-			.insert(publications)
+		await tx
+			.insert(caseInstances)
 			.values({
-				source: PUBLICATION_SOURCE,
-				externalId,
-				contentHash: contentHash({
-					source: PUBLICATION_SOURCE,
-					cnj: input.cnjNumber,
-					availableAt: input.availableAt,
-					text: input.textPlain,
-				}),
-				caseId: input.caseId,
-				cnjNumber: input.cnjNumber,
-				tribunal: input.tribunal,
-				orgName: input.item.nomeOrgao,
-				communicationType: input.item.tipoComunicacao,
-				documentType: input.item.tipoDocumento,
-				availableAt: input.availableAt,
-				medium: input.item.meiocompleto,
-				link: input.item.link,
-				textHtml: input.item.texto,
-				textPlain: input.textPlain,
-				excerpt: input.excerpt,
-				raw: input.item,
+				caseId,
+				grau: document.grau,
+				orgJudgingName: document.orgJudgingName,
+				orgJudgingCode: document.orgJudgingCode,
+				systemName: document.systemName,
+				formatName: document.formatName,
+				filedAt: document.filedAt,
+				secrecyLevel: document.secrecyLevel,
+				datajudDocumentId: stored.id,
+				sourceUpdatedAt: document.sourceUpdatedAt,
 			})
-			.onConflictDoNothing({ target: [publications.source, publications.externalId] })
-			.returning({ id: publications.id });
-
-		if (inserted) {
-			counters.created += 1;
-
-			return inserted.id;
-		}
-
-		counters.duplicated += 1;
-
-		const [existing] = await tx
-			.select({ id: publications.id })
-			.from(publications)
-			.where(
-				and(eq(publications.source, PUBLICATION_SOURCE), eq(publications.externalId, externalId)),
-			)
-			.limit(1);
-
-		if (!existing) {
-			throw new Error(`Publicação ${externalId} conflitou mas não foi encontrada.`);
-		}
-
-		return existing.id;
-	}
-
-	private async enrich(lawyerId: string, runId: string, counters: SyncCounters, force: boolean) {
-		const staleBefore = new Date(Date.now() - DATAJUD_FRESHNESS_MS);
-
-		const targets = await this.db
-			.select({ id: cases.id, cnjNumber: cases.cnjNumber, tribunal: cases.tribunal })
-			.from(cases)
-			.innerJoin(caseLawyers, eq(caseLawyers.caseId, cases.id))
-			.where(
-				and(
-					eq(caseLawyers.lawyerId, lawyerId),
-					force
-						? undefined
-						: or(isNull(cases.datajudSyncedAt), lt(cases.datajudSyncedAt, staleBefore)),
-				),
-			);
-
-		const queue = targets.slice();
-
-		await Promise.all(
-			Array.from({ length: Math.min(DATAJUD_CONCURRENCY, queue.length) }, () =>
-				this.enrichQueue(queue, lawyerId, runId, counters),
-			),
-		);
-	}
-
-	private async enrichQueue(
-		queue: EnrichmentTarget[],
-		lawyerId: string,
-		runId: string,
-		counters: SyncCounters,
-	) {
-		for (let target = queue.shift(); target; target = queue.shift()) {
-			await this.enrichCase(target, counters);
-
-			syncRealtime.publish({
-				...counters,
-				lawyerId,
-				runId,
-				phase: "enriquecimento",
-				errorMessage: null,
+			.onConflictDoUpdate({
+				target: [caseInstances.caseId, caseInstances.grau],
+				set: {
+					orgJudgingName: sql`excluded.org_judging_name`,
+					orgJudgingCode: sql`excluded.org_judging_code`,
+					systemName: sql`excluded.system_name`,
+					formatName: sql`excluded.format_name`,
+					filedAt: sql`excluded.filed_at`,
+					secrecyLevel: sql`excluded.secrecy_level`,
+					datajudDocumentId: sql`excluded.datajud_document_id`,
+					sourceUpdatedAt: sql`excluded.source_updated_at`,
+					updatedAt: new Date(),
+				},
 			});
-		}
 	}
 
-	private async enrichCase(target: EnrichmentTarget, counters: SyncCounters) {
-		try {
-			const found = await this.datajud.findCase({
-				cnjNumber: target.cnjNumber,
-				tribunal: target.tribunal,
-			});
-
-			if (found.status !== "ok") {
-				await this.db
-					.update(cases)
-					.set({ datajudStatus: found.status, datajudSyncedAt: new Date() })
-					.where(eq(cases.id, target.id));
-
-				return;
-			}
-
-			const created = await this.db.transaction(async (tx) => {
-				await tx
-					.update(cases)
-					.set({
-						className: sql`coalesce(${found.case.className}, ${cases.className})`,
-						classCode: sql`coalesce(${found.case.classCode}, ${cases.classCode})`,
-						grau: found.case.grau,
-						orgJudgingName: found.case.orgJudgingName,
-						orgJudgingCode: found.case.orgJudgingCode,
-						subjects: found.case.subjects,
-						systemName: found.case.systemName,
-						filedAt: found.case.filedAt,
-						secrecyLevel: found.case.secrecyLevel,
-						datajudStatus: "ok",
-						datajudSyncedAt: new Date(),
-					})
-					.where(eq(cases.id, target.id));
-
-				return await this.insertDatajudMovements(tx, target.id, found.case.movements);
-			});
-
-			counters.movementsCreated += created;
-			counters.casesEnriched += 1;
-		} catch (error) {
-			await this.db
-				.update(cases)
-				.set({ datajudStatus: "falhou" })
-				.where(eq(cases.id, target.id))
-				.catch((markError: unknown) => {
-					console.error(
-						`[sync] não foi possível marcar o processo ${target.cnjNumber} como falho`,
-						markError,
-					);
-				});
-
-			console.error(`[sync] falha ao enriquecer o processo ${target.cnjNumber}`, error);
-		}
-	}
-
-	private async insertDatajudMovements(tx: Tx, caseId: string, incoming: DatajudMovement[]) {
-		const seen = new Set<string>();
-		const values: (typeof movements.$inferInsert)[] = [];
+	private async insertDatajudMovements(tx: Tx, caseId: string, documents: DatajudDocument[]) {
+		const byKey = new Map<string, typeof movements.$inferInsert>();
 
 		let newest: Date | null = null;
 
-		for (const movement of incoming) {
-			const externalCode = String(movement.code);
-			const key = `${externalCode}|${movement.occurredAt.toISOString()}`;
+		for (const document of documents) {
+			for (const movement of document.movements) {
+				const externalCode = String(movement.code);
+				const key = `${externalCode}|${movement.occurredAt.toISOString()}`;
+				const previous = byKey.get(key);
+				const grau = lowerGrau(previous?.grau, document.grau);
 
-			if (seen.has(key)) {
-				continue;
+				if (previous && grau !== document.grau) {
+					continue;
+				}
+
+				if (!newest || movement.occurredAt > newest) {
+					newest = movement.occurredAt;
+				}
+
+				byKey.set(key, {
+					caseId,
+					occurredAt: movement.occurredAt,
+					type: movement.name,
+					summary: summarize(movementSummary(movement)),
+					source: "datajud",
+					grau,
+					externalCode,
+					complements: movement.complements,
+				});
 			}
-
-			seen.add(key);
-
-			if (!newest || movement.occurredAt > newest) {
-				newest = movement.occurredAt;
-			}
-
-			values.push({
-				caseId,
-				occurredAt: movement.occurredAt,
-				type: movement.name,
-				summary: summarize(movementSummary(movement)),
-				source: "datajud",
-				externalCode,
-				complements: movement.complements,
-			});
 		}
+
+		const values = [...byKey.values()];
 
 		if (!values.length) {
 			return 0;
 		}
 
-		const inserted = await tx
+		// O grau do movimento é retratável: ele veio de um documento que o tribunal reindexa, redistribui
+		// e retira. A fonte corrige o que já está gravado, mas documento que não declarou grau nenhum não
+		// apaga o que outro já disse.
+		const written = await tx
 			.insert(movements)
 			.values(values)
-			.onConflictDoNothing({
+			.onConflictDoUpdate({
 				target: [movements.caseId, movements.source, movements.externalCode, movements.occurredAt],
+				set: { grau: sql`coalesce(excluded.grau, ${movements.grau})` },
 			})
-			.returning({ id: movements.id });
+			.returning({ id: movements.id, inserted: sql<boolean>`(xmax = 0)` });
 
 		if (newest) {
 			await tx
@@ -606,6 +1031,6 @@ export class SyncManager {
 				.where(eq(cases.id, caseId));
 		}
 
-		return inserted.length;
+		return written.filter((row) => row.inserted).length;
 	}
 }

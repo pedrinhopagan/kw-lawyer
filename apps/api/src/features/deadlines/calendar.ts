@@ -119,6 +119,18 @@ export function addDays(date: string, days: number) {
 	return toDateString(shifted);
 }
 
+export function daysBetween(from: string, to: string) {
+	const elapsed = toTimestamp(to) - toTimestamp(from);
+
+	return Math.round(elapsed / MS_PER_DAY);
+}
+
+export function forensicToday() {
+	const now = new Date();
+
+	return now.toLocaleDateString("en-CA", { timeZone: FORENSIC_TIME_ZONE });
+}
+
 export function weekdayOf(date: string) {
 	const parsed = new Date(toTimestamp(date));
 

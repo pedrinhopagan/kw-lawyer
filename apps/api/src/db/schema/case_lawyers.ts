@@ -1,4 +1,4 @@
-import { pgTable, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { index, pgTable, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 import { cases } from "./cases.ts";
 import { lawyers } from "./lawyers.ts";
 
@@ -16,5 +16,10 @@ export const caseLawyers = pgTable(
 			.references(() => lawyers.id, { onDelete: "cascade" }),
 		createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 	},
-	(table) => [unique().on(table.caseId, table.lawyerId)],
+	// O unique é liderado por `case_id`, mas todo escopo do app é por advogada: sem este índice, ler a
+	// carteira dela é varredura da tabela inteira de vínculos.
+	(table) => [
+		unique().on(table.caseId, table.lawyerId),
+		index("case_lawyers_lawyer_case_idx").on(table.lawyerId, table.caseId),
+	],
 );

@@ -12,13 +12,13 @@ import { dateOfItem, isPublication } from "./timeline-data";
 const COPIED_FEEDBACK_MS = 1600;
 
 function Identity({ detail }: { detail: CaseDetail }) {
+	const filedAt = detail.case.instance?.filedAt;
+
 	const parts = [
-		detail.case.orgJudgingName ?? detail.case.orgName,
-		grauLabel(detail.case.grau),
-		detail.case.systemName,
-		detail.case.filedAt
-			? `distribuído em ${new Date(detail.case.filedAt).toLocaleDateString("pt-BR")}`
-			: null,
+		detail.case.instance?.orgJudgingName ?? detail.case.orgName,
+		grauLabel(detail.case.instance?.grau),
+		detail.case.instance?.systemName,
+		filedAt && `distribuído em ${new Date(filedAt).toLocaleDateString("pt-BR")}`,
 	].filter((value): value is string => !!value);
 
 	if (parts.length === 0) {
@@ -38,6 +38,7 @@ export function CaseHeader({ detail }: { detail: CaseDetail }) {
 	const publications = detail.timeline.filter(isPublication);
 	const unread = publications.filter((item) => !item.publication.readAt).length;
 	const latest = detail.timeline.at(0);
+	const secrecyLevel = detail.case.instance?.secrecyLevel;
 	const subjects = (detail.case.subjects ?? [])
 		.map((subject) => subject.nome)
 		.filter((value) => !!value);
@@ -68,17 +69,17 @@ export function CaseHeader({ detail }: { detail: CaseDetail }) {
 				<Button
 					variant="ghost"
 					size="icon-xs"
-					className="text-muted-foreground"
+					className="size-9 text-muted-foreground sm:size-6"
 					aria-label="Copiar número do processo"
 					onClick={copyNumber}
 				>
 					{!copied && <CopyIcon />}
 					{copied && <CheckIcon className="text-primary" />}
 				</Button>
-				{!!detail.case.secrecyLevel && detail.case.secrecyLevel > 0 && (
+				{!!secrecyLevel && secrecyLevel > 0 && (
 					<span className="inline-flex items-center gap-1 text-2xs text-muted-foreground">
 						<LockIcon className="size-3" />
-						sigilo nível {detail.case.secrecyLevel}
+						sigilo nível {secrecyLevel}
 					</span>
 				)}
 			</div>

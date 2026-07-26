@@ -1,0 +1,1 @@
+ALTER TABLE "publications" ADD COLUMN "class_name" text;

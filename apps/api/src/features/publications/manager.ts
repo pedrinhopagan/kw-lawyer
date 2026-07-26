@@ -1,18 +1,69 @@
 import { ORPCError } from "@orpc/server";
-import { and, asc, count, desc, eq, gte, isNull, lte, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, ilike, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import type { Db, Tx } from "../../db/client.ts";
+import { caseParties } from "../../db/schema/case_parties.ts";
 import { cases } from "../../db/schema/cases.ts";
 import { publicationLinks } from "../../db/schema/publication_links.ts";
 import { publications } from "../../db/schema/publications.ts";
+import { addDays } from "../deadlines/calendar.ts";
+import { PUBLICATION_BACKFILL_DAYS } from "./window.ts";
 
-interface PublicationListInput {
+interface PublicationFilterInput {
 	lawyerId: string;
-	onlyUnread: boolean;
+	historyCutoffAt: string;
+	includeHistory: boolean;
 	tribunal?: string;
 	from?: string;
 	to?: string;
+	query?: string;
+}
+
+interface PublicationListInput extends PublicationFilterInput {
+	onlyUnread: boolean;
 	limit: number;
 	offset: number;
+}
+
+function floorCondition(input: PublicationFilterInput) {
+	if (input.from) {
+		return gte(publications.availableAt, input.from);
+	}
+
+	if (input.includeHistory) {
+		return;
+	}
+
+	return gte(publications.availableAt, addDays(input.historyCutoffAt, -PUBLICATION_BACKFILL_DAYS));
+}
+
+function likePattern(value: string) {
+	return `%${value.replaceAll(/[\\%_]/gu, (match) => `\\${match}`)}%`;
+}
+
+function searchCondition(query: string) {
+	const digits = query.replaceAll(/\D/gu, "");
+
+	return or(
+		ilike(publications.textPlain, likePattern(query)),
+		ilike(publications.orgName, likePattern(query)),
+		digits ? ilike(publications.cnjNumber, likePattern(digits)) : undefined,
+	);
+}
+
+function publicationCondition(input: PublicationFilterInput) {
+	const query = input.query?.trim();
+
+	return and(
+		input.tribunal ? eq(publications.tribunal, input.tribunal.trim().toUpperCase()) : undefined,
+		floorCondition(input),
+		input.to ? lte(publications.availableAt, input.to) : undefined,
+		query ? searchCondition(query) : undefined,
+	);
+}
+
+interface PublicationParty {
+	name: string;
+	polo: string | null;
 }
 
 interface PublicationItemInput {
@@ -27,9 +78,7 @@ export class PublicationManager {
 		const where = and(
 			eq(publicationLinks.lawyerId, input.lawyerId),
 			input.onlyUnread ? isNull(publicationLinks.readAt) : undefined,
-			input.tribunal ? eq(publications.tribunal, input.tribunal.trim().toUpperCase()) : undefined,
-			input.from ? gte(publications.availableAt, input.from) : undefined,
-			input.to ? lte(publications.availableAt, input.to) : undefined,
+			publicationCondition(input),
 		);
 
 		const [rows, totals, unreads] = await Promise.all([
@@ -45,7 +94,16 @@ export class PublicationManager {
 					medium: publications.medium,
 					link: publications.link,
 					excerpt: publications.excerpt,
+					active: publications.active,
+					status: publications.status,
+					cancelReason: publications.cancelReason,
+					canceledAt: publications.canceledAt,
 					readAt: publicationLinks.readAt,
+					parties: sql<PublicationParty[]>`coalesce((
+						select json_agg(json_build_object('name', ${caseParties.name}, 'polo', ${caseParties.polo}) order by ${caseParties.polo} nulls last, ${caseParties.name})
+						from ${caseParties}
+						where ${caseParties.caseId} = ${publications.caseId}
+					), '[]'::json)`,
 					case: {
 						id: cases.id,
 						cnjNumber: cases.cnjNumber,
@@ -68,7 +126,14 @@ export class PublicationManager {
 			this.db
 				.select({ unread: count() })
 				.from(publicationLinks)
-				.where(and(eq(publicationLinks.lawyerId, input.lawyerId), isNull(publicationLinks.readAt))),
+				.innerJoin(publications, eq(publications.id, publicationLinks.publicationId))
+				.where(
+					and(
+						eq(publicationLinks.lawyerId, input.lawyerId),
+						isNull(publicationLinks.readAt),
+						floorCondition(input),
+					),
+				),
 		]);
 
 		return {
@@ -76,6 +141,24 @@ export class PublicationManager {
 			total: totals[0]?.total ?? 0,
 			unread: unreads[0]?.unread ?? 0,
 		};
+	}
+
+	// A barra lateral quer um número, não uma página. Pedir `list` com `limit: 1` só para ler o campo
+	// `unread` custava três consultas por montagem da barra, duas delas jogadas fora.
+	async unread(input: { lawyerId: string; historyCutoffAt: string }) {
+		const [row] = await this.db
+			.select({ unread: count() })
+			.from(publicationLinks)
+			.innerJoin(publications, eq(publications.id, publicationLinks.publicationId))
+			.where(
+				and(
+					eq(publicationLinks.lawyerId, input.lawyerId),
+					isNull(publicationLinks.readAt),
+					floorCondition({ ...input, includeHistory: false }),
+				),
+			);
+
+		return { unread: row ? row.unread : 0 };
 	}
 
 	async get(input: PublicationItemInput) {
@@ -94,6 +177,10 @@ export class PublicationManager {
 				link: publications.link,
 				textHtml: publications.textHtml,
 				textPlain: publications.textPlain,
+				active: publications.active,
+				status: publications.status,
+				cancelReason: publications.cancelReason,
+				canceledAt: publications.canceledAt,
 				createdAt: publications.createdAt,
 				readAt: publicationLinks.readAt,
 				case: {
@@ -141,5 +228,26 @@ export class PublicationManager {
 		}
 
 		return { ok: true };
+	}
+
+	async readAll(input: PublicationFilterInput) {
+		const matching = this.db
+			.select({ id: publications.id })
+			.from(publications)
+			.where(publicationCondition(input));
+
+		const updated = await this.db
+			.update(publicationLinks)
+			.set({ readAt: sql`now()` })
+			.where(
+				and(
+					eq(publicationLinks.lawyerId, input.lawyerId),
+					isNull(publicationLinks.readAt),
+					inArray(publicationLinks.publicationId, matching),
+				),
+			)
+			.returning({ id: publicationLinks.id });
+
+		return { read: updated.length };
 	}
 }

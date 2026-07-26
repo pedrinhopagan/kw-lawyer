@@ -37,7 +37,7 @@ function source(textPlain: string) {
 
 test("marcador de processo principal do DJEN define a orientação do vínculo", () => {
 	const [relation] = classifyRelations({
-		self: { cnjNumber: CUMPRIMENTO, className: "Cumprimento de sentença", grau: "G1" },
+		self: { cnjNumber: CUMPRIMENTO, className: "Cumprimento de sentença" },
 		source: source(
 			"Processo 0001834-98.2025.8.26.0022 (processo principal 1004176-75.2019.8.26.0022) - Cumprimento de sentença - Seguro - José Antonio Cardoso - Banco do Brasil S/A - Ante o exposto, REJEITO a impugnação.",
 		),
@@ -53,11 +53,11 @@ test("marcador de processo principal do DJEN define a orientação do vínculo",
 
 test("agravo citando o processo de origem aponta o principal certo", () => {
 	const [relation] = classifyRelations({
-		self: { cnjNumber: AGRAVO, className: "Agravo de Instrumento", grau: "G2" },
+		self: { cnjNumber: AGRAVO, className: "Agravo de Instrumento" },
 		source: source(
 			"AGRAVO DE INSTRUMENTO Nº 2022310-99.2026.8.26.0000 - Origem: processo 1004176-75.2019.8.26.0022 - Limeira - Vistos.",
 		),
-		known: () => ({ cnjNumber: PRINCIPAL, className: "Procedimento Comum Cível", grau: "G1" }),
+		known: () => ({ cnjNumber: PRINCIPAL, className: "Procedimento Comum Cível" }),
 	});
 
 	assertDefined(relation);
@@ -70,7 +70,7 @@ test("agravo citando o processo de origem aponta o principal certo", () => {
 test("citação ambígua entre dois processos comuns não inventa vínculo", () => {
 	expect(
 		classifyRelations({
-			self: { cnjNumber: PRINCIPAL, className: "Procedimento Comum Cível", grau: "G1" },
+			self: { cnjNumber: PRINCIPAL, className: "Procedimento Comum Cível" },
 			source: source(
 				"Processo 1004176-75.2019.8.26.0022 - Vistos. Conforme decidido nos autos 1009999-11.2020.8.26.0022, aplica-se o mesmo entendimento.",
 			),
@@ -93,7 +93,7 @@ test(
 			cnjNumber: AGRAVO,
 			tribunal: "TJSP",
 			className: "Agravo de Instrumento",
-			grau: "G2",
+			graus: ["G2"],
 		});
 
 		const publicationId = await seedPublication(tx, {

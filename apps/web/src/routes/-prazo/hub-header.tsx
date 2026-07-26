@@ -5,10 +5,12 @@ import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import {
 	AUDIENCE_LABELS,
+	CANCELED_PUBLICATION_LABEL,
 	CONFIDENCE_LABELS,
 	countdownLabel,
 	daysUntil,
 	fullDate,
+	isCanceledPublicationWarning,
 	STATUS_LABELS,
 	UNIT_LABELS,
 	urgencyOf,
@@ -49,7 +51,7 @@ function Countdown({ dueAt, open }: { dueAt: string; open: boolean }) {
 }
 
 export function HubHeader({ data }: { data: HubData }) {
-	const open = data.deadline.status === "a_confirmar" || data.deadline.status === "confirmado";
+	const open = data.deadline.status === "pendente";
 
 	return (
 		<header className="border-b border-border pb-5">
@@ -64,6 +66,9 @@ export function HubHeader({ data }: { data: HubData }) {
 			<div className="mt-3 flex flex-wrap items-center gap-2">
 				{!!data.case && <span className="tag-tribunal">{data.case.tribunal}</span>}
 				<Chip>{STATUS_LABELS[data.deadline.status]}</Chip>
+				{data.deadline.warnings.some(isCanceledPublicationWarning) && (
+					<Chip tone="alert">{CANCELED_PUBLICATION_LABEL}</Chip>
+				)}
 				<Chip tone={data.deadline.confidence === "alta" ? "neutral" : "alert"}>
 					{CONFIDENCE_LABELS[data.deadline.confidence]}
 				</Chip>
@@ -102,8 +107,8 @@ export function HubHeader({ data }: { data: HubData }) {
 							<MetaList
 								items={[
 									data.case.className ? formatPersonName(data.case.className) : null,
-									data.case.orgJudgingName ?? data.case.orgName,
-									grauLabel(data.case.grau),
+									data.case.instance?.orgJudgingName ?? data.case.orgName,
+									grauLabel(data.case.instance?.grau),
 								].filter((value): value is string => !!value)}
 							/>
 						</span>

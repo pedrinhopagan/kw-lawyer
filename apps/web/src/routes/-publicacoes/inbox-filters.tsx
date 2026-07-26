@@ -6,7 +6,10 @@ import {
 	FilterXIcon,
 	LandmarkIcon,
 	MailOpenIcon,
+	SearchIcon,
+	XIcon,
 } from "lucide-react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
 	DropdownMenu,
@@ -19,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { usePublicationFloor } from "@/hooks/use-history-cutoff";
 import { tribunaisQueryOptions } from "@/hooks/use-tribunais";
 import { cn } from "@/lib/cn";
 import { shortDate } from "./publication-meta";
@@ -45,6 +49,8 @@ export function InboxFilters({
 }) {
 	return (
 		<div className="flex flex-wrap items-center gap-1.5">
+			<SearchField key={search.q ?? ""} value={search.q} onChange={onChange} />
+
 			<Button
 				variant="outline"
 				size="sm"
@@ -58,7 +64,12 @@ export function InboxFilters({
 
 			<TribunalFilter value={search.tribunal} onChange={onChange} />
 
-			<PeriodFilter from={search.from} to={search.to} onChange={onChange} />
+			<PeriodFilter
+				from={search.from}
+				to={search.to}
+				historico={search.historico}
+				onChange={onChange}
+			/>
 
 			{hasFilters(search) && (
 				<Button
@@ -72,6 +83,56 @@ export function InboxFilters({
 				</Button>
 			)}
 		</div>
+	);
+}
+
+function SearchField({
+	value,
+	onChange,
+}: {
+	value: string | undefined;
+	onChange: (patch: InboxFilterPatch) => void;
+}) {
+	const [draft, setDraft] = useState(value ?? "");
+
+	// O campo é text-base no celular de propósito: abaixo de 16px o Safari do iPhone dá zoom na página
+	// inteira quando ela toca para buscar, e a tela sai de lugar.
+	return (
+		<form
+			className="relative flex min-w-0 flex-1 items-center sm:max-w-64"
+			onSubmit={(event) => {
+				event.preventDefault();
+				onChange({ q: draft.trim() || undefined });
+			}}
+		>
+			<SearchIcon className="pointer-events-none absolute left-2 size-3.5 text-muted-foreground" />
+
+			<input
+				type="search"
+				value={draft}
+				maxLength={200}
+				placeholder="Buscar teor, vara ou CNJ"
+				aria-label="Buscar nas publicações"
+				className="h-10 w-full rounded-md border border-border bg-background pr-7 pl-7 text-base outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 sm:h-8 sm:text-xs dark:bg-input/30"
+				onChange={(event) => setDraft(event.target.value)}
+			/>
+
+			{!!draft && (
+				<Button
+					type="button"
+					variant="ghost"
+					size="icon-xs"
+					aria-label="Limpar busca"
+					className="absolute right-0.5 text-muted-foreground"
+					onClick={() => {
+						setDraft("");
+						onChange({ q: undefined });
+					}}
+				>
+					<XIcon />
+				</Button>
+			)}
+		</form>
 	);
 }
 
@@ -145,7 +206,21 @@ function TribunalOptions({
 	);
 }
 
-function periodLabel(from: string | undefined, to: string | undefined) {
+function periodLabel({
+	from,
+	to,
+	historico,
+	cutoff,
+}: {
+	from: string | undefined;
+	to: string | undefined;
+	historico: true | undefined;
+	cutoff: string | undefined;
+}) {
+	if (historico) {
+		return "Todo o histórico";
+	}
+
 	if (from && to) {
 		return `${shortDate(from)} a ${shortDate(to)}`;
 	}
@@ -158,26 +233,33 @@ function periodLabel(from: string | undefined, to: string | undefined) {
 		return `Até ${shortDate(to)}`;
 	}
 
+	if (cutoff) {
+		return `Desde ${shortDate(cutoff)}`;
+	}
+
 	return "Período";
 }
 
 function PeriodFilter({
 	from,
 	to,
+	historico,
 	onChange,
 }: {
 	from: string | undefined;
 	to: string | undefined;
+	historico: true | undefined;
 	onChange: (patch: InboxFilterPatch) => void;
 }) {
-	const active = !!from || !!to;
+	const cutoff = usePublicationFloor();
+	const active = !!from || !!to || !!historico;
 
 	return (
 		<Popover>
 			<PopoverTrigger asChild>
 				<Button variant="outline" size="sm" className={cn("gap-1.5", active && ACTIVE_CLASS)}>
 					<CalendarDaysIcon className="size-3.5" />
-					{periodLabel(from, to)}
+					{periodLabel({ from, to, historico, cutoff })}
 					<ChevronDownIcon className="size-3 opacity-60" />
 				</Button>
 			</PopoverTrigger>
@@ -190,7 +272,11 @@ function PeriodFilter({
 							type="button"
 							className={PRESET_ITEM_CLASS}
 							onClick={() =>
-								onChange({ from: format(subDays(new Date(), days), ISO_DATE), to: undefined })
+								onChange({
+									from: format(subDays(new Date(), days), ISO_DATE),
+									to: undefined,
+									historico: undefined,
+								})
 							}
 						>
 							Últimos {days} dias
@@ -201,10 +287,22 @@ function PeriodFilter({
 						type="button"
 						className={PRESET_ITEM_CLASS}
 						onClick={() =>
-							onChange({ from: format(startOfYear(new Date()), ISO_DATE), to: undefined })
+							onChange({
+								from: format(startOfYear(new Date()), ISO_DATE),
+								to: undefined,
+								historico: undefined,
+							})
 						}
 					>
 						Este ano
+					</button>
+
+					<button
+						type="button"
+						className={PRESET_ITEM_CLASS}
+						onClick={() => onChange({ from: undefined, to: undefined, historico: true })}
+					>
+						Todo o histórico
 					</button>
 				</div>
 
@@ -218,7 +316,9 @@ function PeriodFilter({
 							value={from ?? ""}
 							max={to}
 							className="h-8 px-2 text-xs [color-scheme:light] dark:[color-scheme:dark]"
-							onChange={(event) => onChange({ from: event.target.value || undefined })}
+							onChange={(event) =>
+								onChange({ from: event.target.value || undefined, historico: undefined })
+							}
 						/>
 					</label>
 
@@ -229,7 +329,9 @@ function PeriodFilter({
 							value={to ?? ""}
 							min={from}
 							className="h-8 px-2 text-xs [color-scheme:light] dark:[color-scheme:dark]"
-							onChange={(event) => onChange({ to: event.target.value || undefined })}
+							onChange={(event) =>
+								onChange({ to: event.target.value || undefined, historico: undefined })
+							}
 						/>
 					</label>
 				</div>
@@ -239,10 +341,17 @@ function PeriodFilter({
 						variant="ghost"
 						size="xs"
 						className="mt-2 w-full text-muted-foreground"
-						onClick={() => onChange({ from: undefined, to: undefined })}
+						onClick={() => onChange({ from: undefined, to: undefined, historico: undefined })}
 					>
 						Limpar período
 					</Button>
+				)}
+
+				{!active && !!cutoff && (
+					<p className="mt-2 text-2xs leading-relaxed text-muted-foreground">
+						Sem período escolhido, a lista começa em {shortDate(cutoff)}. O que saiu antes disso
+						está em Todo o histórico.
+					</p>
 				)}
 			</PopoverContent>
 		</Popover>

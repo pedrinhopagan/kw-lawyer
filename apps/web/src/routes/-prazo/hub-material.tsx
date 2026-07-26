@@ -1,10 +1,15 @@
 import { Link } from "@tanstack/react-router";
-import { ArrowUpRightIcon, TriangleAlertIcon } from "lucide-react";
+import { ArrowUpRightIcon, BanIcon, TriangleAlertIcon } from "lucide-react";
 import { useState } from "react";
 import { Chip, Quote, SectionRule, SourceLink } from "@/components/dossier";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
-import { actDate, shortDate, STATUS_LABELS } from "@/lib/deadline-meta";
+import {
+	actDate,
+	isCanceledPublicationWarning,
+	shortDate,
+	STATUS_LABELS,
+} from "@/lib/deadline-meta";
 import { formatCnj } from "@/lib/format";
 import {
 	countLabel,
@@ -20,18 +25,40 @@ import {
 import { CalcTrail } from "./calc-trail";
 import type { HubData } from "./queries";
 
+function HubWarning({ warning }: { warning: string }) {
+	if (isCanceledPublicationWarning(warning)) {
+		return (
+			<li className="flex gap-2 text-xs leading-relaxed font-medium text-destructive">
+				<BanIcon className="mt-0.5 size-3.5 shrink-0" />
+				{warning}
+			</li>
+		);
+	}
+
+	return (
+		<li className="flex gap-2 text-xs leading-relaxed">
+			<TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+			{warning}
+		</li>
+	);
+}
+
 export function HubWarnings({ warnings }: { warnings: string[] }) {
 	if (warnings.length === 0) {
 		return null;
 	}
 
 	return (
-		<ul className="mt-4 flex flex-col gap-2 rounded-[3px] border border-border bg-muted/40 p-3">
+		<ul
+			className={cn(
+				"mt-4 flex flex-col gap-2 rounded-[3px] border p-3",
+				warnings.some(isCanceledPublicationWarning)
+					? "border-destructive/35 bg-destructive/8"
+					: "border-border bg-muted/40",
+			)}
+		>
 			{warnings.map((warning) => (
-				<li key={warning} className="flex gap-2 text-xs leading-relaxed">
-					<TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
-					{warning}
-				</li>
+				<HubWarning key={warning} warning={warning} />
 			))}
 		</ul>
 	);

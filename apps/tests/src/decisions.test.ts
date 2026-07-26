@@ -1,45 +1,14 @@
 import { caseDecisions } from "@kw-lawyer/api/src/db/schema/case_decisions.ts";
 import { movements } from "@kw-lawyer/api/src/db/schema/movements.ts";
 import { classifyDecision } from "@kw-lawyer/api/src/features/decisions/classify.ts";
-import type {
-	CaseSource,
-	CaseSourcePublication,
-} from "@kw-lawyer/api/src/features/legal/case-scan.ts";
 import { DecisionManager } from "@kw-lawyer/api/src/features/decisions/manager.ts";
 import { expect, test } from "bun:test";
 import { and, eq } from "drizzle-orm";
 import { assertDefined, expectOrpcError } from "./utils/assertions.ts";
+import { movementSource, publicationOf } from "./utils/case-source.ts";
 import { withRollback } from "./utils/db.ts";
 import { createTestClient } from "./utils/orpc.ts";
 import { seedCase, seedDeadline, seedLawyer, seedPublication } from "./utils/seed.ts";
-
-function publicationOf(textPlain: string, documentType: string): CaseSourcePublication {
-	return {
-		id: crypto.randomUUID(),
-		documentType,
-		communicationType: "Intimação",
-		textPlain,
-		availableAt: "2026-05-04",
-		link: "https://exemplo.jus.br/publicacao",
-	};
-}
-
-function movementSource(input: {
-	summary: string;
-	type: string | null;
-	externalCode: string | null;
-	publication: CaseSourcePublication | null;
-}): CaseSource {
-	return {
-		movementId: crypto.randomUUID(),
-		occurredAt: new Date("2026-05-04T00:00:00Z"),
-		type: input.type,
-		summary: input.summary,
-		externalCode: input.externalCode,
-		complements: null,
-		publication: input.publication,
-	};
-}
 
 test("classifica sentença de mérito pelo dispositivo e guarda o trecho decisório", () => {
 	const classification = classifyDecision(
@@ -61,7 +30,7 @@ test("classifica sentença de mérito pelo dispositivo e guarda o trecho decisó
 	expect(classification.effects).toContain("encerra_fase");
 	expect(classification.effects).toContain("condena_verba");
 	expect(classification.snippet).toContain("JULGO IMPROCEDENTES");
-	expect(classification.confidence).toBe("alta");
+	expect(classification.speciesConfidence).toBe("alta");
 });
 
 test("acórdão que cita o art. 485 da sentença atacada é lido pelo que decidiu do recurso", () => {
@@ -124,7 +93,135 @@ test("movimento do DataJud sem teor decisório não vira linha na aba de decisõ
 
 	expect(comResultado.species).toBe("sentenca");
 	expect(comResultado.outcome).toBe("procedente");
-	expect(comResultado.confidence).toBe("alta");
+	expect(comResultado.speciesConfidence).toBe("alta");
+});
+
+// Os cinco códigos de embargos estão no OUTCOME_BY_CODE e fora do SPECIES_BY_CODE: o movimento diz
+// que os embargos foram acolhidos ou rejeitados, e não diz se quem os decidiu foi sentença,
+// interlocutória ou monocrática. É o caso mais comum do app, e o que a espécie escolhe (recurso,
+// prazo, preparo, base) sai inteiro de uma regex sobre o texto.
+test("código de embargos dá o resultado, não a espécie, e a espécie deduzida do texto não sai em alta", () => {
+	const casos = [
+		{
+			code: "198",
+			outcome: "embargos_acolhidos",
+			species: "interlocutoria",
+			text: "Defiro em parte o pedido liminar formulado, para suspender o protesto.",
+		},
+		{
+			code: "15162",
+			outcome: "embargos_acolhidos",
+			species: "interlocutoria",
+			text: "Defiro em parte o pedido liminar formulado, para suspender o protesto.",
+		},
+		{
+			code: "15163",
+			outcome: "embargos_acolhidos",
+			species: "sentenca",
+			text: "Julgo procedente o pedido e condeno a ré ao pagamento de R$ 10.000,00.",
+		},
+		{
+			code: "200",
+			outcome: "embargos_rejeitados",
+			species: "sentenca",
+			text: "Julgo procedente o pedido e condeno a ré ao pagamento de R$ 10.000,00.",
+		},
+		{
+			code: "15164",
+			outcome: "embargos_rejeitados",
+			species: "monocratica",
+			text: "Nego seguimento ao recurso por manifestamente inadmissível.",
+		},
+	] as const;
+
+	for (const caso of casos) {
+		const classification = classifyDecision(
+			movementSource({
+				summary: "Embargos de declaração",
+				type: null,
+				externalCode: caso.code,
+				publication: publicationOf(caso.text, "Intimação"),
+			}),
+		);
+
+		assertDefined(classification);
+
+		expect(classification.outcome).toBe(caso.outcome);
+		expect(classification.species).toBe(caso.species);
+		expect(classification.speciesConfidence).toBe("baixa");
+	}
+});
+
+test("cabeçalho e texto que se contradizem não devolvem a espécie como certeza, nos dois sentidos", () => {
+	const cabecalhoMenor = classifyDecision(
+		movementSource({
+			summary: "Intimação",
+			type: null,
+			externalCode: null,
+			publication: publicationOf(
+				"Julgo improcedente o pedido, com resolução do mérito.",
+				"Despacho",
+			),
+		}),
+	);
+
+	assertDefined(cabecalhoMenor);
+
+	expect(cabecalhoMenor.species).toBe("sentenca");
+	expect(cabecalhoMenor.speciesConfidence).toBe("baixa");
+
+	const cabecalhoMaior = classifyDecision(
+		movementSource({
+			summary: "Intimação",
+			type: null,
+			externalCode: null,
+			publication: publicationOf(
+				"Defiro a liminar para suspender o protesto e indefiro o restante do pedido.",
+				"Sentença",
+			),
+		}),
+	);
+
+	assertDefined(cabecalhoMaior);
+
+	expect(cabecalhoMaior.species).toBe("interlocutoria");
+	expect(cabecalhoMaior.speciesConfidence).toBe("baixa");
+
+	const concordante = classifyDecision(
+		movementSource({
+			summary: "Intimação",
+			type: null,
+			externalCode: null,
+			publication: publicationOf(
+				"Julgo improcedente o pedido, com resolução do mérito.",
+				"Sentença",
+			),
+		}),
+	);
+
+	assertDefined(concordante);
+
+	expect(concordante.species).toBe("sentenca");
+	expect(concordante.speciesConfidence).toBe("alta");
+});
+
+test("cabeçalho sem confirmação do teor não é certeza, mas também não é dedução de texto", () => {
+	const classification = classifyDecision(
+		movementSource({
+			summary: "Intimação",
+			type: null,
+			externalCode: null,
+			publication: publicationOf(
+				"Vistos. Manifeste-se a parte autora sobre a contestação no prazo de 15 dias.",
+				"Sentença",
+			),
+		}),
+	);
+
+	assertDefined(classification);
+
+	expect(classification.species).toBe("sentenca");
+	expect(classification.speciesConfidence).toBe("media");
 });
 
 test("despacho só entra quando produz efeito, não quando é mero expediente", () => {

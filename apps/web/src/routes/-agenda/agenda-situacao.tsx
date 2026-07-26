@@ -3,25 +3,19 @@ import { orpc } from "@/lib/orpc";
 import { STATUS_LABELS } from "@/lib/deadline-meta";
 import { DeadlineRow } from "./deadline-row";
 import type { DeadlineItem, DeadlineSummary } from "./queries";
-import {
-	type AgendaSearch,
-	type DeadlineStatus,
-	groupStatusesOf,
-	groupSummaryInputOf,
-} from "./search";
+import { groupStatusesOf, groupSummaryInputOf } from "./query-input";
+import type { AgendaSearch, DeadlineStatus } from "./search";
 
-const GROUP_ORDER: DeadlineStatus[] = ["a_confirmar", "confirmado", "cumprido", "descartado"];
+const GROUP_ORDER: DeadlineStatus[] = ["pendente", "cumprido", "descartado"];
 
 const COUNT_KEYS: Record<DeadlineStatus, keyof DeadlineSummary> = {
-	a_confirmar: "toConfirm",
-	confirmado: "confirmed",
+	pendente: "pending",
 	cumprido: "done",
 	descartado: "dismissed",
 };
 
 const GROUP_NOTES: Record<DeadlineStatus, string> = {
-	a_confirmar: "Lidos da publicação e esperando a sua confirmação.",
-	confirmado: "Você conferiu a contagem. Estão valendo.",
+	pendente: "Correndo na sua agenda, ainda sem baixa.",
 	cumprido: "Já protocolados ou resolvidos.",
 	descartado: "Tirados da sua agenda por não serem prazo seu.",
 };

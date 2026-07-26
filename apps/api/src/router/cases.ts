@@ -1,9 +1,9 @@
 import { type } from "arktype";
 import { CaseManager } from "../features/cases/manager.ts";
-import { authed } from "../orpc.ts";
+import { synced } from "../orpc.ts";
 
 export const casesRouter = {
-	list: authed
+	list: synced
 		.input(
 			type({
 				"+": "delete",
@@ -17,7 +17,11 @@ export const casesRouter = {
 			new CaseManager(context.db).list({ ...input, lawyerId: context.lawyer.id }),
 		),
 
-	get: authed
+	tribunals: synced.handler(({ context }) =>
+		new CaseManager(context.db).tribunals({ lawyerId: context.lawyer.id }),
+	),
+
+	get: synced
 		.input(type({ "+": "delete", cnjNumber: "string > 0" }))
 		.handler(({ input, context }) =>
 			new CaseManager(context.db).get({ ...input, lawyerId: context.lawyer.id }),

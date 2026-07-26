@@ -1,4 +1,13 @@
-import { ChevronsUpDownIcon, LogOutIcon, MoonIcon, SunIcon } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
+import {
+	CheckIcon,
+	ChevronsUpDownIcon,
+	LogOutIcon,
+	MoonIcon,
+	SunIcon,
+	UserPlusIcon,
+} from "lucide-react";
 import { useTheme } from "next-themes";
 import {
 	DropdownMenu,
@@ -9,12 +18,21 @@ import {
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { formatOab, formatPersonName, initialsOf } from "@/lib/format";
-import { type SessionLawyer, useLogout } from "../-auth/session";
+import {
+	profilesQueryOptions,
+	type SessionLawyer,
+	useLogout,
+	useSwitchProfile,
+} from "../-auth/session";
 
 export function LawyerMenu({ lawyer }: { lawyer: SessionLawyer }) {
 	const { resolvedTheme, setTheme } = useTheme();
+	const profiles = useQuery(profilesQueryOptions);
+	const switchProfile = useSwitchProfile();
 	const logout = useLogout();
 	const isDark = resolvedTheme === "dark";
+	const connected = profiles.data?.profiles ?? [];
+	const busy = switchProfile.isPending || logout.isPending;
 
 	return (
 		<DropdownMenu>
@@ -34,14 +52,56 @@ export function LawyerMenu({ lawyer }: { lawyer: SessionLawyer }) {
 			</DropdownMenuTrigger>
 
 			<DropdownMenuContent align="start" side="top" className="w-60">
-				<DropdownMenuLabel className="flex flex-col gap-0.5">
-					<span className="truncate text-xs font-medium">{formatPersonName(lawyer.name)}</span>
-					<span className="font-mono text-2xs font-normal text-muted-foreground">
-						{formatOab(lawyer)}
-					</span>
-				</DropdownMenuLabel>
+				{connected.length < 2 && (
+					<DropdownMenuLabel className="flex flex-col gap-0.5">
+						<span className="truncate text-xs font-medium">{formatPersonName(lawyer.name)}</span>
+						<span className="font-mono text-2xs font-normal text-muted-foreground">
+							{formatOab(lawyer)}
+						</span>
+					</DropdownMenuLabel>
+				)}
+
+				{connected.length > 1 && (
+					<>
+						<DropdownMenuLabel className="text-2xs font-normal text-muted-foreground">
+							Conectados neste navegador
+						</DropdownMenuLabel>
+
+						{connected.map((profile) => (
+							<DropdownMenuItem
+								key={profile.id}
+								disabled={busy}
+								onSelect={() => {
+									if (!profile.active) {
+										switchProfile.mutate(profile.id);
+									}
+								}}
+							>
+								<span className="grid size-6 shrink-0 place-items-center rounded-full bg-muted font-mono text-[0.625rem] font-semibold text-muted-foreground">
+									{initialsOf(profile.name)}
+								</span>
+								<span className="flex min-w-0 flex-1 flex-col">
+									<span className="truncate text-xs leading-tight font-medium">
+										{formatPersonName(profile.name)}
+									</span>
+									<span className="mt-0.5 font-mono text-2xs leading-none text-muted-foreground">
+										{formatOab(profile)}
+									</span>
+								</span>
+								{profile.active && <CheckIcon className="size-3.5 shrink-0 text-primary" />}
+							</DropdownMenuItem>
+						))}
+					</>
+				)}
 
 				<DropdownMenuSeparator />
+
+				<DropdownMenuItem asChild>
+					<Link to="/login" search={{}}>
+						<UserPlusIcon />
+						Entrar com outra OAB
+					</Link>
+				</DropdownMenuItem>
 
 				<DropdownMenuItem onSelect={() => setTheme(isDark ? "light" : "dark")}>
 					{isDark && <SunIcon />}
@@ -50,13 +110,10 @@ export function LawyerMenu({ lawyer }: { lawyer: SessionLawyer }) {
 					{!isDark && "Tema escuro"}
 				</DropdownMenuItem>
 
-				<DropdownMenuItem
-					variant="destructive"
-					disabled={logout.isPending}
-					onSelect={() => logout.mutate({})}
-				>
+				<DropdownMenuItem variant="destructive" disabled={busy} onSelect={() => logout.mutate()}>
 					<LogOutIcon />
-					Sair
+					{connected.length > 1 && "Sair desta OAB"}
+					{connected.length < 2 && "Sair"}
 				</DropdownMenuItem>
 			</DropdownMenuContent>
 		</DropdownMenu>

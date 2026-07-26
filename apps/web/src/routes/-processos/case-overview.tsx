@@ -6,15 +6,14 @@ import { countLabel, EFFECT_LABELS, OUTCOME_LABELS, SPECIES_LABELS } from "@/lib
 import { actDate } from "@/lib/deadline-meta";
 import { orpc } from "@/lib/orpc";
 import { AxisEmpty } from "./axis-states";
+import { CaseSignalsBand } from "./case-signals";
 import { DeadlineTicket } from "./deadline-ticket";
 import type { CaseDetail } from "./queries";
-
-const OPEN_STATUSES = ["a_confirmar", "confirmado"] as const;
 
 function OpenDeadlines({ caseId }: { caseId: string }) {
 	const query = useQuery(
 		orpc.deadlines.list.queryOptions({
-			input: { caseId, status: [...OPEN_STATUSES, "cumprido", "descartado"], limit: 100 },
+			input: { caseId, status: ["pendente", "cumprido", "descartado"], limit: 100 },
 		}),
 	);
 
@@ -36,10 +35,10 @@ function OpenDeadlines({ caseId }: { caseId: string }) {
 	}
 
 	const all = query.data.items;
-	const open = all.filter((item) => OPEN_STATUSES.some((status) => status === item.status));
+	const open = all.filter((item) => item.status === "pendente");
 	const mine = open.filter((item) => item.audience !== "terceiro");
 	const others = open.filter((item) => item.audience === "terceiro");
-	const closed = all.filter((item) => !OPEN_STATUSES.some((status) => status === item.status));
+	const closed = all.filter((item) => item.status !== "pendente");
 
 	if (open.length === 0) {
 		return (
@@ -155,6 +154,7 @@ export function CaseOverview({ detail }: { detail: CaseDetail }) {
 
 			<section>
 				<SectionRule title="Onde o processo está" />
+				<CaseSignalsBand signals={detail.signals} />
 				<LatestDecision cnjNumber={detail.case.cnjNumber} />
 			</section>
 		</div>

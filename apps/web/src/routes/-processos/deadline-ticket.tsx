@@ -11,7 +11,7 @@ export interface TicketDeadline {
 }
 
 export function DeadlineTicket({ deadline }: { deadline: TicketDeadline }) {
-	const open = deadline.status === "a_confirmar" || deadline.status === "confirmado";
+	const open = deadline.status === "pendente";
 	const urgency = urgencyOf(deadline.dueAt);
 
 	return (

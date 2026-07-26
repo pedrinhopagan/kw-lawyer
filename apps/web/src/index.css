@@ -58,6 +58,13 @@
 :root {
 	--radius: 0.375rem;
 
+	/* Com o PWA instalado no iPhone e a barra de status translúcida, o topo da tela fica sob o notch.
+	   A altura do cabeçalho do celular e o `top` dos cabeçalhos de página saem daqui juntos: se um
+	   soubesse do inset e o outro não, a barra da página escorregaria para debaixo da navegação. */
+	--kw-safe-top: env(safe-area-inset-top, 0px);
+	--kw-safe-bottom: env(safe-area-inset-bottom, 0px);
+	--kw-mobile-header: calc(3rem + var(--kw-safe-top));
+
 	--background: oklch(0.985 0.0035 84);
 	--foreground: oklch(0.218 0.0092 76);
 	--card: oklch(1 0 0);

@@ -2,7 +2,7 @@ import { createForensicCalendar } from "@kw-lawyer/api/src/features/deadlines/ca
 import { calculateDeadline } from "@kw-lawyer/api/src/features/deadlines/counting.ts";
 import { stubLawyer, stubPublications } from "../playwright/cnj-stub.ts";
 import { expect, test } from "../playwright/fixtures.ts";
-import { enterGate, loginWithOab } from "../playwright/ui.ts";
+import { loginWithOab } from "../playwright/ui.ts";
 
 const DEADLINE_TITLE = "Prazo indicado na publicação";
 const AGENDA_TIMEOUT_MS = 20_000;
@@ -25,10 +25,9 @@ test("a agenda abre no recorte da advogada e o mesmo prazo aparece nas três vis
 	});
 
 	await page.goto("/login");
-	await enterGate(page);
 	await loginWithOab(page, stubLawyer);
 	await page.waitForURL("**/publicacoes");
-	await page.goto("/agenda");
+	await page.goto("/agenda?vista=lista");
 
 	const abrir = page.getByRole("button", {
 		name: new RegExp(`^Abrir o prazo ${DEADLINE_TITLE}`, "u"),
@@ -46,11 +45,13 @@ test("a agenda abre no recorte da advogada e o mesmo prazo aparece nas três vis
 		await page.getByRole("button", { name: "Próximo mês" }).click();
 	}
 
-	await expect(page.getByRole("button", { name: DEADLINE_TITLE, exact: true })).toBeVisible();
+	await expect(
+		page.getByRole("button", { name: new RegExp(`${DEADLINE_TITLE}$`, "u") }),
+	).toBeVisible();
 
 	await page.getByRole("group", { name: "Vista da agenda" }).getByText("Situação").click();
 
-	const pendentes = page.getByRole("heading", { name: "A confirmar", level: 2 });
+	const pendentes = page.getByRole("heading", { name: "Em aberto", level: 2 });
 
 	await expect(pendentes).toBeVisible();
 	await expect(abrir).toBeVisible();
@@ -62,10 +63,9 @@ test("o filtro de audiência tira da agenda o prazo que não é da advogada", as
 	page,
 }) => {
 	await page.goto("/login");
-	await enterGate(page);
 	await loginWithOab(page, stubLawyer);
 	await page.waitForURL("**/publicacoes");
-	await page.goto("/agenda");
+	await page.goto("/agenda?vista=lista");
 
 	const abrir = page.getByRole("button", {
 		name: new RegExp(`^Abrir o prazo ${DEADLINE_TITLE}`, "u"),

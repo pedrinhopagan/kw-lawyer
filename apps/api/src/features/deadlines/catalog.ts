@@ -114,4 +114,23 @@ export const LEGAL_DEADLINES: LegalDeadline[] = [
 		basis: "CLT, art. 895",
 		patterns: [/recurso ordin[aá]rio/u],
 	},
+	{
+		key: "recurso_revista",
+		label: "Recurso de revista",
+		days: 8,
+		unit: "uteis",
+		basis: "Lei 5.584/70, art. 6",
+		patterns: [/recurso de revista/u],
+	},
+	// O texto da publicação chama os dois de "agravo interno": quem separa o prazo de 8 dias do de 15
+	// é o ramo da justiça, que só o número do processo sabe. Sem padrão, o extrator nunca elege este
+	// ato por texto; ele existe para o mapa de cabimento, que lê o CNJ.
+	{
+		key: "agravo_interno_trabalhista",
+		label: "Agravo interno na Justiça do Trabalho",
+		days: 8,
+		unit: "uteis",
+		basis: "Lei 5.584/70, art. 6",
+		patterns: [],
+	},
 ];

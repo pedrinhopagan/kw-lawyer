@@ -1,6 +1,6 @@
 import { stubLawyer, stubPublications } from "../playwright/cnj-stub.ts";
 import { expect, test } from "../playwright/fixtures.ts";
-import { enterGate, loginWithOab } from "../playwright/ui.ts";
+import { loginWithOab } from "../playwright/ui.ts";
 
 const TOTAL = Object.keys(stubPublications).length;
 
@@ -9,7 +9,6 @@ test("abrir uma publicação do inbox marca como lida e derruba o contador", asy
 	scenario: _scenario,
 }) => {
 	await page.goto("/login");
-	await enterGate(page);
 	await loginWithOab(page, stubLawyer);
 
 	await expect(page.getByLabel(`${TOTAL} publicações não lidas`)).toBeVisible();

@@ -3,25 +3,41 @@ import { createHonoMiddleware } from "@juicerq/trail/hono";
 import { RPCHandler } from "@orpc/server/fetch";
 import { type Context, Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import type { Db } from "./db/client.ts";
-import { ACCESS_COOKIE_NAME, accessCookieOptions, hasAccess } from "./features/access/gate.ts";
+import type { Db, Tx } from "./db/client.ts";
+import {
+	ACCESS_COOKIE_NAME,
+	accessCookieOptions,
+	createAccessToken,
+	hasAccess,
+} from "./features/access/gate.ts";
 import { AuthManager } from "./features/auth/manager.ts";
 import {
-	readLoginToken,
+	readSessionToken,
 	SESSION_COOKIE_NAME,
 	sessionCookieOptions,
 } from "./features/auth/session.ts";
 import { CalendarManager } from "./features/calendar/manager.ts";
 import { GoogleOAuthClient } from "./features/calendar/google/oauth.ts";
-import { env, googleCalendarConfigured } from "./env.ts";
+import { accessGateConfigured, env, googleCalendarConfigured } from "./env.ts";
 import { obs } from "./observability.ts";
 import { appRouter } from "./router.ts";
 
 const ORPC_PREFIX = "/orpc";
 const ORPC_LOGIN_PATH = "/orpc/auth/login";
 const ORPC_LOGOUT_PATH = "/orpc/auth/logout";
+const ORPC_SWITCH_PATH = "/orpc/auth/switch";
 const ORPC_ACCESS_LOGIN_PATH = "/orpc/access/login";
 const ORPC_ACCESS_LOGOUT_PATH = "/orpc/access/logout";
+
+// Entrar, trocar de advogado e sair respondem com o token que passa a valer nesta aba, então o
+// cookie sai da resposta e não da renovação automática logo abaixo.
+const SESSION_TOKEN_PATHS = new Set([ORPC_LOGIN_PATH, ORPC_SWITCH_PATH, ORPC_LOGOUT_PATH]);
+
+const COOKIE_OWNED_PATHS = new Set([
+	...SESSION_TOKEN_PATHS,
+	ORPC_ACCESS_LOGIN_PATH,
+	ORPC_ACCESS_LOGOUT_PATH,
+]);
 
 const GOOGLE_STATE_COOKIE_NAME = "kw_google_state";
 const GOOGLE_STATE_TTL_S = 600;
@@ -29,7 +45,7 @@ const GOOGLE_STATE_BYTES = 32;
 const GOOGLE_REDIRECT_URI = `${env.APP_BASE_URL}/auth/google/callback`;
 
 type CreateApiAppOptions = {
-	db: Db;
+	db: Db | Tx;
 };
 
 function agendaRedirect(feedback: "conectado" | "erro" | "nao_configurado") {
@@ -40,7 +56,7 @@ function stateSignature(params: { state: string; sessionToken: string }) {
 	return createHmac("sha256", params.sessionToken).update(params.state).digest("base64url");
 }
 
-async function currentLawyer(c: Context, db: Db) {
+async function currentSession(c: Context, db: Db | Tx) {
 	const token = getCookie(c, SESSION_COOKIE_NAME);
 
 	if (!token) {
@@ -68,9 +84,9 @@ export function createApiApp(options: CreateApiAppOptions) {
 			return c.redirect(agendaRedirect("nao_configurado"));
 		}
 
-		const lawyer = await currentLawyer(c, options.db);
+		const session = await currentSession(c, options.db);
 
-		if (!lawyer) {
+		if (!session) {
 			return c.redirect(agendaRedirect("erro"));
 		}
 
@@ -109,9 +125,9 @@ export function createApiApp(options: CreateApiAppOptions) {
 		const code = c.req.query("code");
 		const state = c.req.query("state");
 		const sessionToken = getCookie(c, SESSION_COOKIE_NAME);
-		const lawyer = await currentLawyer(c, options.db);
+		const session = await currentSession(c, options.db);
 
-		if (!lawyer || !sessionToken || !code || !state || !signature) {
+		if (!session || !sessionToken || !code || !state || !signature) {
 			return c.redirect(agendaRedirect("erro"));
 		}
 
@@ -120,7 +136,7 @@ export function createApiApp(options: CreateApiAppOptions) {
 		}
 
 		const connected = await new CalendarManager(options.db)
-			.connect({ lawyerId: lawyer.id, code, redirectUri: GOOGLE_REDIRECT_URI })
+			.connect({ lawyerId: session.lawyer.id, code, redirectUri: GOOGLE_REDIRECT_URI })
 			.catch((error: unknown) => {
 				obs.escalate("error");
 				obs.enrich({
@@ -139,15 +155,28 @@ export function createApiApp(options: CreateApiAppOptions) {
 	});
 
 	app.use("/orpc/*", async (c, next) => {
-		const lawyer = await currentLawyer(c, options.db);
+		const currentToken = getCookie(c, SESSION_COOKIE_NAME);
+		const session = currentToken
+			? await new AuthManager(options.db).resolveSession(currentToken)
+			: null;
+		const access = hasAccess(getCookie(c, ACCESS_COOKIE_NAME));
+
+		// Cookie emitido só no login expira sozinho e desloga quem depende de push. Toda request de
+		// quem já entrou devolve a validade ao topo; os caminhos de login e de saída cuidam do próprio
+		// cookie logo abaixo.
+		if (!COOKIE_OWNED_PATHS.has(c.req.path)) {
+			if (currentToken && session) {
+				setCookie(c, SESSION_COOKIE_NAME, currentToken, sessionCookieOptions());
+			}
+
+			if (access && accessGateConfigured) {
+				setCookie(c, ACCESS_COOKIE_NAME, createAccessToken(), accessCookieOptions());
+			}
+		}
 
 		const { matched, response } = await handler.handle(c.req.raw, {
 			prefix: ORPC_PREFIX,
-			context: {
-				lawyer,
-				access: hasAccess(getCookie(c, ACCESS_COOKIE_NAME)),
-				db: options.db,
-			},
+			context: { session, access, db: options.db },
 		});
 
 		if (!matched) return next();
@@ -159,19 +188,17 @@ export function createApiApp(options: CreateApiAppOptions) {
 			return c.newResponse(response.body, response);
 		}
 
-		if (c.req.path === ORPC_LOGOUT_PATH) {
-			deleteCookie(c, SESSION_COOKIE_NAME, { path: "/" });
-
-			return c.newResponse(response.body, response);
-		}
-
 		if (!response.ok) {
+			if (c.req.path === ORPC_LOGOUT_PATH) {
+				deleteCookie(c, SESSION_COOKIE_NAME, { path: "/" });
+			}
+
 			return c.newResponse(response.body, response);
 		}
 
 		if (c.req.path === ORPC_ACCESS_LOGIN_PATH) {
 			const body = await response.text();
-			const accessToken = readLoginToken(body);
+			const accessToken = readSessionToken(body);
 
 			if (accessToken) {
 				setCookie(c, ACCESS_COOKIE_NAME, accessToken, accessCookieOptions());
@@ -180,15 +207,23 @@ export function createApiApp(options: CreateApiAppOptions) {
 			return c.newResponse(body, response);
 		}
 
-		if (c.req.path !== ORPC_LOGIN_PATH) {
+		if (!SESSION_TOKEN_PATHS.has(c.req.path)) {
 			return c.newResponse(response.body, response);
 		}
 
 		const body = await response.text();
-		const sessionToken = readLoginToken(body);
+		const sessionToken = readSessionToken(body);
 
+		// Sair do último perfil é o único caso legítimo de resposta sem token: os outros dois caminhos
+		// existem justamente para dizer qual sessão passa a valer.
 		if (!sessionToken) {
-			throw new Error("Login respondeu sem token de sessão");
+			if (c.req.path !== ORPC_LOGOUT_PATH) {
+				throw new Error(`${c.req.path} respondeu sem token de sessão`);
+			}
+
+			deleteCookie(c, SESSION_COOKIE_NAME, { path: "/" });
+
+			return c.newResponse(body, response);
 		}
 
 		setCookie(c, SESSION_COOKIE_NAME, sessionToken, sessionCookieOptions());

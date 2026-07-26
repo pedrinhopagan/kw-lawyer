@@ -1,9 +1,11 @@
 import { defineConfig, devices } from "@playwright/test";
 import { CNJ_STUB_PORT, DATAJUD_STUB_BASE_URL, DJEN_STUB_BASE_URL } from "./playwright/cnj-stub.ts";
-import { GATE_PASSWORD, GATE_USER } from "./playwright/ui.ts";
+import { GATE_PASSWORD, GATE_STATE_PATH, GATE_USER } from "./playwright/ui.ts";
 
-const API_PORT = 3001;
-const WEB_PORT = 5174;
+// Porta fixa em máquina que roda vários projetos vira teste rodando contra o app do vizinho:
+// `reuseExistingServer` aceita o que já está no ar, e a suíte inteira falha sem dizer por quê.
+const API_PORT = Number(process.env.KW_E2E_API_PORT ?? 3001);
+const WEB_PORT = Number(process.env.KW_E2E_WEB_PORT ?? 5174);
 const API_URL = `http://localhost:${API_PORT}`;
 const WEB_URL = `http://localhost:${WEB_PORT}`;
 const DATABASE_URL = "postgres://postgres:postgres@localhost:5445/lawyer_e2e";
@@ -12,6 +14,13 @@ process.env.DATABASE_URL = DATABASE_URL;
 process.env.NODE_ENV = "test";
 process.env.DJEN_BASE_URL = DJEN_STUB_BASE_URL;
 process.env.DATAJUD_BASE_URL = DATAJUD_STUB_BASE_URL;
+
+// Toda spec que precisa de painel entra pelo formulário, e é sempre a mesma OAB dentro do mesmo
+// minuto. Com o teto de produção, a suíte passa a falhar por número de specs em vez de por defeito,
+// e a mensagem de limite aparece no lugar da tela esperada. O teto real é provado na integração.
+const LOGIN_ATTEMPT_LIMIT = "1000";
+
+process.env.LOGIN_ATTEMPT_LIMIT = LOGIN_ATTEMPT_LIMIT;
 
 export default defineConfig({
 	testDir: "./tests",
@@ -28,8 +37,15 @@ export default defineConfig({
 
 	projects: [
 		{
-			name: "chromium",
+			name: "gate",
+			testDir: "./playwright",
+			testMatch: /gate\.setup\.ts$/u,
 			use: { ...devices["Desktop Chrome"] },
+		},
+		{
+			name: "chromium",
+			dependencies: ["gate"],
+			use: { ...devices["Desktop Chrome"], storageState: GATE_STATE_PATH },
 		},
 	],
 
@@ -59,6 +75,7 @@ export default defineConfig({
 				// passa por ele não prova nada sobre o app publicado.
 				ACCESS_USER: GATE_USER,
 				ACCESS_PASSWORD: GATE_PASSWORD,
+				LOGIN_ATTEMPT_LIMIT: LOGIN_ATTEMPT_LIMIT,
 			},
 		},
 		{

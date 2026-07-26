@@ -2,7 +2,7 @@ import { createForensicCalendar } from "@kw-lawyer/api/src/features/deadlines/ca
 import { calculateDeadline } from "@kw-lawyer/api/src/features/deadlines/counting.ts";
 import { stubLawyer, stubPublications } from "../playwright/cnj-stub.ts";
 import { expect, test } from "../playwright/fixtures.ts";
-import { enterGate, loginWithOab } from "../playwright/ui.ts";
+import { loginWithOab } from "../playwright/ui.ts";
 
 const SYNC_TIMEOUT_MS = 20_000;
 const DEADLINE_TITLE = "Prazo indicado na publicação";
@@ -12,6 +12,7 @@ function asBrazilianDate(isoDate: string) {
 }
 
 test("o prazo da agenda abre o hub de ação com a memória de cálculo e aceita a baixa", async ({
+	scenario: _scenario,
 	page,
 }) => {
 	const expected = calculateDeadline({
@@ -24,12 +25,11 @@ test("o prazo da agenda abre o hub de ação com a memória de cálculo e aceita
 	});
 
 	await page.goto("/login");
-	await enterGate(page);
 	await loginWithOab(page, stubLawyer);
 
 	await expect(page.getByRole("heading", { name: "Publicações", level: 1 })).toBeVisible();
 
-	await page.goto("/agenda");
+	await page.goto("/agenda?vista=lista");
 
 	const abrir = page.getByRole("button", {
 		name: new RegExp(`^Abrir o prazo ${DEADLINE_TITLE}`, "u"),
@@ -49,8 +49,8 @@ test("o prazo da agenda abre o hub de ação com a memória de cálculo e aceita
 	await expect(page.getByText(asBrazilianDate(expected.publishedAt))).toBeVisible();
 	await expect(page.getByText(asBrazilianDate(expected.dueAt)).first()).toBeVisible();
 
-	await page.getByRole("button", { name: "Confirmar prazo" }).click();
+	await page.getByRole("button", { name: "Marcar cumprido" }).click();
 
-	await expect(page.getByRole("button", { name: "Confirmar prazo" })).toBeHidden();
-	await expect(page.getByText("Confirmado").first()).toBeVisible();
+	await expect(page.getByRole("button", { name: "Marcar cumprido" })).toBeHidden();
+	await expect(page.getByText("Cumprido").first()).toBeVisible();
 });
