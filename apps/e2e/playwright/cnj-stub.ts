@@ -1,6 +1,6 @@
 import { formatCnj } from "@kw-lawyer/api/src/features/djen/normalize.ts";
 
-export const CNJ_STUB_PORT = 3002;
+export const CNJ_STUB_PORT = 1999;
 export const CNJ_STUB_URL = `http://localhost:${CNJ_STUB_PORT}`;
 export const DJEN_STUB_BASE_URL = `${CNJ_STUB_URL}/djen`;
 export const DATAJUD_STUB_BASE_URL = `${CNJ_STUB_URL}/datajud`;
