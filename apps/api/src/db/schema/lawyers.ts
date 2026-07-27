@@ -13,9 +13,12 @@ export const lawyers = pgTable(
 		oabNumber: text("oab_number").notNull(),
 		oabUf: text("oab_uf").notNull(),
 		djenAdvogadoId: integer("djen_advogado_id"),
+		// `current_date` é o dia do servidor, que roda em UTC: entre as 21h e a meia-noite de Brasília a
+		// advogada que entrava pela primeira vez nascia com o corte um dia à frente, e a caixa abria já
+		// sem a publicação daquela tarde. O dia forense é o de `FORENSIC_TIME_ZONE`, aqui e no calendário.
 		historyCutoffAt: date("history_cutoff_at")
 			.notNull()
-			.default(sql`current_date`),
+			.default(sql`(now() AT TIME ZONE 'America/Sao_Paulo')::date`),
 		onboardingState: text("onboarding_state")
 			.$type<OnboardingState>()
 			.notNull()

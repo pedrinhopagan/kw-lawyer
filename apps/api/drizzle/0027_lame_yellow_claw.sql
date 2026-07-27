@@ -1,0 +1,1 @@
+ALTER TABLE "lawyers" ALTER COLUMN "history_cutoff_at" SET DEFAULT (now() AT TIME ZONE 'America/Sao_Paulo')::date;
