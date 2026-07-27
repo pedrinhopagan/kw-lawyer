@@ -5,10 +5,8 @@ import type { RouterClient } from "@orpc/server";
 import { createTanstackQueryUtils } from "@orpc/tanstack-query";
 import { MutationCache, QueryCache, QueryClient } from "@tanstack/react-query";
 import type { AppRouter } from "@api/router";
+import { ACCESS_PATH, GATE_ORDER, LOGIN_PATH, ONBOARDING_PATH } from "./gates";
 
-const LOGIN_PATH = "/login";
-const ACCESS_PATH = "/entrar";
-const ONBOARDING_PATH = "/comecar";
 const SERVER_ERROR_STATUS = 500;
 const MAX_RETRIES = 2;
 
@@ -44,7 +42,16 @@ function expireSession(error: unknown) {
 
 	const target = gatePathOf(error.code);
 
-	if (!target || window.location.pathname === target) {
+	if (!target) {
+		return;
+	}
+
+	// Senha do gate recusada em /entrar chega como UNAUTHORIZED, o mesmo código de sessão vencida.
+	// Tratar isso como expiração recarregava a página inteira, engolia o aviso do erro e devolvia a
+	// advogada para /entrar com o endereço aninhado dentro dele mesmo a cada tentativa.
+	const current = GATE_ORDER.indexOf(window.location.pathname);
+
+	if (current >= 0 && GATE_ORDER.indexOf(target) >= current) {
 		return;
 	}
 
