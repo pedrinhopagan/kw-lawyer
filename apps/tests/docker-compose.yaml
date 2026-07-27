@@ -1,3 +1,7 @@
+# Sem nome próprio o compose chama o projeto de "tests", o nome da pasta, e qualquer outro repositório
+# com uma pasta assim compartilha os containers: um `db:down` aqui derruba o banco de teste do vizinho.
+name: kw-lawyer-tests
+
 services:
   db_test:
     image: postgres:17
