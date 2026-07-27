@@ -2,11 +2,34 @@ import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query
 import { toast } from "sonner";
 import { orpc, orpcClient } from "@/lib/orpc";
 
+declare global {
+	interface Navigator {
+		standalone?: boolean;
+	}
+}
+
 const DEVICE_ENDPOINT_KEY = ["push", "device-endpoint"] as const;
 
 const APPLE_UA_PATTERN = /iphone|ipad|ipod/iu;
+const MAC_TOUCH_POINTS = 1;
 
+// O iPad se apresenta como Macintosh desde o iPadOS 13, e só o toque o separa de um desktop.
+function appleTouchDevice() {
+	if (APPLE_UA_PATTERN.test(navigator.userAgent)) {
+		return true;
+	}
+
+	return navigator.userAgent.includes("Macintosh") && navigator.maxTouchPoints > MAC_TOUCH_POINTS;
+}
+
+// `display-mode` só responde standalone no Safari 17: no iOS 16.4, o primeiro a entregar Web Push,
+// quem já instalou o app continuaria lendo o convite para instalar, com o botão de ativar desligado.
+// `navigator.standalone` é a API antiga da Apple e o único sinal que os dois entendem.
 function standaloneDisplay() {
+	if (window.navigator.standalone) {
+		return true;
+	}
+
 	return window.matchMedia("(display-mode: standalone)").matches;
 }
 
@@ -21,7 +44,7 @@ export function supportsPush() {
 // O Safari entrega Web Push só para PWA adicionado à Tela de Início, iOS 16.4 ou superior. Sem
 // reconhecer esse caso, a advogada toca em ativar, nada acontece e a feature morre no primeiro contato.
 export function needsInstallFirst() {
-	if (!APPLE_UA_PATTERN.test(navigator.userAgent)) {
+	if (!appleTouchDevice()) {
 		return false;
 	}
 
