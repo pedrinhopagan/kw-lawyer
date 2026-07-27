@@ -14,3 +14,5 @@ apps/e2e/playwright-report/
 apps/e2e/test-results/
 .koworker/
 apps/e2e/.auth/
+apps/web/.tanstack/
+.optmem/
