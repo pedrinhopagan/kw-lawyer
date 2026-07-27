@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { GATE_ORDER } from "@kw-lawyer/web/src/lib/gates.ts";
 import { validateRedirectSearch } from "@kw-lawyer/web/src/routes/-auth/redirect-search.ts";
 import { agendaSearchSchema } from "@kw-lawyer/web/src/routes/-agenda/search.ts";
 import { parseCaseSearch, parseCasesSearch } from "@kw-lawyer/web/src/routes/-processos/search.ts";
@@ -195,5 +196,15 @@ describe("validateRedirectSearch", () => {
 	test("recusa valor que não é string em vez de lançar", () => {
 		expect(validateRedirectSearch({ redirect: ["/agenda"] })).toEqual({});
 		expect(validateRedirectSearch({})).toEqual({});
+	});
+
+	// Gate guardado como destino aninhava um endereço dentro do outro até travar a aba.
+	test("recusa qualquer tela de gate como destino", () => {
+		for (const gate of GATE_ORDER) {
+			expect(validateRedirectSearch({ redirect: gate }).redirect).toBeUndefined();
+			expect(
+				validateRedirectSearch({ redirect: `${gate}?redirect=%2Fagenda` }).redirect,
+			).toBeUndefined();
+		}
 	});
 });

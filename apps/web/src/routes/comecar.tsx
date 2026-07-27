@@ -7,17 +7,20 @@ import { Brand } from "./-shell/brand";
 import { ThemeToggle } from "./-shell/theme-toggle";
 
 export const Route = createFileRoute("/comecar")({
-	beforeLoad: async ({ context, location }) => {
+	beforeLoad: async ({ context }) => {
 		const { granted } = await context.queryClient.ensureQueryData(accessQueryOptions);
 
+		// Esta tela não é destino de volta: o gate devolve a advogada para o painel, e é o painel que
+		// manda de novo para cá enquanto a carga não terminou. Guardar /comecar no endereço só
+		// aninhava um gate dentro do outro.
 		if (!granted) {
-			redirect({ to: "/entrar", search: { redirect: location.href }, throw: true });
+			redirect({ to: "/entrar", throw: true });
 		}
 
 		const { lawyer } = await context.queryClient.ensureQueryData(sessionQueryOptions);
 
 		if (!lawyer) {
-			redirect({ to: "/login", search: { redirect: location.href }, throw: true });
+			redirect({ to: "/login", throw: true });
 
 			return;
 		}

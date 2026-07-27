@@ -10,14 +10,17 @@ import { sessionQueryOptions } from "./-auth/session";
 
 export const Route = createFileRoute("/login")({
 	validateSearch: validateRedirectSearch,
-	beforeLoad: async ({ context, location }) => {
+	beforeLoad: async ({ context, search }) => {
 		const { granted } = await context.queryClient.ensureQueryData(accessQueryOptions);
 
 		if (granted) {
 			return;
 		}
 
-		redirect({ to: "/entrar", search: { redirect: location.href }, throw: true });
+		// O destino guardado é o painel que a advogada tentou abrir, nunca esta tela: quem volta do
+		// gate cai no painel e o `beforeLoad` de lá remonta a cadeia sozinho. Guardar /login aqui
+		// aninhava um endereço dentro do outro, e ele dobrava de tamanho a cada passagem.
+		redirect({ to: "/entrar", search: { redirect: search.redirect }, throw: true });
 	},
 	component: LoginPage,
 });
