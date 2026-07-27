@@ -190,6 +190,13 @@
       "when": 1785098320007,
       "tag": "0026_uma_sessao_viva_por_perfil",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1785111363642,
+      "tag": "0027_lame_yellow_claw",
+      "breakpoints": true
     }
   ]
 }
