@@ -16,7 +16,7 @@
 	"dependencies": {
 		"@kw-lawyer/api": "workspace:*",
 		"@kw-lawyer/web": "workspace:*",
-		"@orpc/server": "^1.14.0",
+		"@orpc/server": "^1.14.10",
 		"drizzle-orm": "^0.45.2"
 	},
 	"devDependencies": {
