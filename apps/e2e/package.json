@@ -12,7 +12,7 @@
 	},
 	"dependencies": {
 		"@kw-lawyer/api": "workspace:*",
-		"@orpc/client": "^1.14.0",
+		"@orpc/client": "^1.14.10",
 		"drizzle-orm": "^0.45.2",
 		"postgres": "^3.4.9"
 	},
